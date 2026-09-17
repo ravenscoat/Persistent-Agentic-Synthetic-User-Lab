@@ -42,7 +42,7 @@ class SmokeModel:
             return None
         for item in elements:
             if name in str(item.get("name", "")).casefold():
-                return str(item["id"])
+                return str(item.get("target"))
         return None
 
     async def decide(self, messages, decision_schema=None, generation_options=None) -> ModelResponse:
@@ -56,13 +56,13 @@ class SmokeModel:
             submit = self._element(page, "create account")
             if self.form_step == 0 and email:
                 self.form_step = 1
-                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="fill", arguments={"element_id": email, "value": "smoke@example.test"}, observation_id=self._observation_id(page)))
+                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="fill", arguments={"target": email, "value": "smoke@example.test"}))
             elif self.form_step == 1 and password:
                 self.form_step = 2
-                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="fill", arguments={"element_id": password, "value": "not-a-real-password"}, observation_id=self._observation_id(page)))
+                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="fill", arguments={"target": password, "value": "not-a-real-password"}))
             elif self.form_step == 2 and submit:
                 self.form_step = 3
-                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="click", arguments={"element_id": submit}, observation_id=self._observation_id(page)))
+                decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="click", arguments={"target": submit}))
             else:
                 decision = AgentDecision(kind=DecisionKind.FINISH, summary="signup page complete")
         else:

@@ -77,6 +77,10 @@ class PersonaAgent:
             action = decision.action
             if action is None:
                 return await self._fail(current, observation, steps, requests, "missing_action")
+            try:
+                action = self._resolve_model_target(action, observation)
+            except ValueError:
+                return await self._fail(current, observation, steps, requests, "invalid_action_target")
             result: ToolResult = await self.tools.dispatch(persona, action)
             steps += 1
             event = self._event(current, "tool_result", {"tool_name": action.tool_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)
@@ -104,6 +108,26 @@ class PersonaAgent:
         exhausted = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
         await self.state.checkpoint_step(current.id, self._event(current, "budget_exhausted", {"reason": reason}, steps + 1), exhausted)
         return AgentRunResult("failed", reason, steps, requests, observation.id)
+
+    @staticmethod
+    def _resolve_model_target(action: Action, observation: Any) -> Action:
+        """Resolve compact eN targets against this exact observation."""
+        if action.tool_name not in {"click", "fill", "select_option"}:
+            return action
+        arguments = dict(action.arguments)
+        target = arguments.pop("target", None)
+        if target is not None:
+            if not isinstance(target, str) or not target.startswith("e") or not target[1:].isdigit():
+                raise ValueError("invalid model target alias")
+            index = int(target[1:]) - 1
+            if index < 0 or index >= len(observation.elements):
+                raise ValueError("model target alias is not in the current observation")
+            arguments["element_id"] = observation.elements[index].id
+        if "element_id" not in arguments:
+            raise ValueError("element action requires target")
+        if action.observation_id is None:
+            return action.model_copy(update={"arguments": arguments, "observation_id": observation.id})
+        return action.model_copy(update={"arguments": arguments})
 
     async def _fail(self, session: SessionRecord, observation: Any, steps: int, requests: int, reason: str) -> AgentRunResult:
         failed = session.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
