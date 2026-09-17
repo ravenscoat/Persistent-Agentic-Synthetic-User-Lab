@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     browser_origin: str = "http://127.0.0.1:8001"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     postgres_dsn: str | None = None
+    business_fault: str | None = None
 
     def ensure_artifact_root(self) -> Path:
         self.artifact_root.mkdir(parents=True, exist_ok=True)

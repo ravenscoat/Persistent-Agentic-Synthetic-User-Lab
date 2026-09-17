@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from .postgres_store import PostgresDemoStore
 from .store import DemoStore
 
 
@@ -10,10 +14,19 @@ def _page(title: str, body: str) -> str:
     return f"<!doctype html><html><head><title>{title}</title></head><body><main><h1>{title}</h1>{body}</main></body></html>"
 
 
-def create_demo_app(store: DemoStore | None = None) -> FastAPI:
-    business = store or DemoStore()
+def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastAPI:
+    # Tests pass an explicit SQLite DemoStore. A configured deployment uses
+    # PostgreSQL without changing any route or verifier code.
+    dsn = os.getenv("SUL_POSTGRES_DSN")
+    business = store or (PostgresDemoStore(dsn, fault=os.getenv("SUL_BUSINESS_FAULT")) if dsn else DemoStore(fault=os.getenv("SUL_BUSINESS_FAULT")))
     app = FastAPI(title="Synthetic Lab Demo Application")
     app.state.store = business
+
+    if isinstance(business, PostgresDemoStore):
+        @app.on_event("startup")
+        async def migrate_postgres() -> None:
+            migration = Path(__file__).resolve().parents[3] / "migrations" / "003_demo_business_postgres.sql"
+            await business.apply_migration(str(migration))
 
     @app.get("/", response_class=HTMLResponse)
     async def home() -> str:
