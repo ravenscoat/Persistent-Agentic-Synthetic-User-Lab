@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, email TEXT NOT NULL UN
 CREATE TABLE IF NOT EXISTS memberships (account_id TEXT NOT NULL, member_id TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY(account_id, member_id));
 CREATE TABLE IF NOT EXISTS purchase_operations (operation_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, amount_cents INTEGER NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL, account_id TEXT NOT NULL, amount_cents INTEGER NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', assignee TEXT);
+CREATE TABLE IF NOT EXISTS invitations (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, email TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, message TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 """
 
 
@@ -98,3 +103,32 @@ class DemoStore:
     def role(self, account_id: str, member_id: str) -> str | None:
         row = self.connection.execute("SELECT role FROM memberships WHERE account_id = ? AND member_id = ?", (account_id, member_id)).fetchone()
         return None if row is None else str(row["role"])
+
+    def create_project(self, account_id: str, project_id: str, name: str) -> None:
+        self.connection.execute("INSERT INTO projects(id,account_id,name,created_at) VALUES (?,?,?,?)", (project_id, account_id, name, self.business_time.isoformat()))
+        self.connection.commit()
+
+    def create_task(self, project_id: str, task_id: str, title: str, assignee: str | None = None) -> None:
+        self.connection.execute("INSERT INTO tasks(id,project_id,title,status,assignee) VALUES (?,?,?,?,?)", (task_id, project_id, title, "pending", assignee))
+        self.connection.commit()
+
+    def complete_task(self, task_id: str) -> None:
+        status = "pending" if self.fault == "task_completion_stale" else "completed"
+        self.connection.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+        self.connection.commit()
+
+    def invite(self, account_id: str, invitation_id: str, email: str) -> None:
+        self.connection.execute("INSERT INTO invitations(id,account_id,email,status,created_at) VALUES (?,?,?,?,?)", (invitation_id, account_id, email, "pending", self.business_time.isoformat()))
+        self.connection.commit()
+
+    def subscribe(self, account_id: str, subscription_id: str) -> None:
+        self.connection.execute("INSERT INTO subscriptions(id,account_id,status,started_at) VALUES (?,?,?,?)", (subscription_id, account_id, "active", self.business_time.isoformat()))
+        self.connection.commit()
+
+    def cancel_subscription(self, subscription_id: str) -> None:
+        self.connection.execute("UPDATE subscriptions SET status = 'active' WHERE id = ?" if self.fault == "cancel_ignored" else "UPDATE subscriptions SET status = 'cancelled' WHERE id = ?", (subscription_id,))
+        self.connection.commit()
+
+    def notifications(self, account_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute("SELECT id,message,read,created_at FROM notifications WHERE account_id = ? ORDER BY created_at DESC", (account_id,)).fetchall()
+        return [dict(row) for row in rows]

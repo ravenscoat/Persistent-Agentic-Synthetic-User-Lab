@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -70,6 +71,7 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         <form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button type="submit">Purchase</button></form>
         <form method="post" action="/onboarding"><input name="step" type="number" value="2"><button type="submit">Save onboarding</button></form>
         <form method="post" action="/transfer"><input name="new_member" value="new-owner"><button type="submit">Transfer ownership</button></form>'''
+        body += '<p><a href="/projects">Projects</a> | <a href="/notifications">Notifications</a></p>'
         return HTMLResponse(_page("Account dashboard", body))
 
     @app.post("/purchase")
@@ -86,6 +88,27 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
     async def transfer(request: Request, new_member: str = Form(...)) -> RedirectResponse:
         business.transfer_owner(account_id(request), request.cookies.get("member_id", "old-owner"), new_member)
         return RedirectResponse("/dashboard", status_code=303)
+
+    @app.get("/projects", response_class=HTMLResponse)
+    async def projects(request: Request) -> HTMLResponse:
+        current_id = account_id(request)
+        return HTMLResponse(_page("Projects", '<form method="post"><input name="name" placeholder="Project name" required><button>Create project</button></form><p>Create a project, then use the API tools to add tasks.</p><a href="/dashboard">Back</a>'))
+
+    @app.post("/projects")
+    async def create_project(request: Request, name: str = Form(...)) -> RedirectResponse:
+        business.create_project(account_id(request), f"project-{uuid4().hex[:8]}", name)
+        return RedirectResponse("/projects", status_code=303)
+
+    @app.post("/invitations")
+    async def invite(request: Request, email: str = Form(...)) -> RedirectResponse:
+        business.invite(account_id(request), f"invite-{uuid4().hex[:8]}", email)
+        return RedirectResponse("/dashboard", status_code=303)
+
+    @app.get("/notifications", response_class=HTMLResponse)
+    async def notifications(request: Request) -> HTMLResponse:
+        values = business.notifications(account_id(request))
+        body = "".join(f"<li>{item['message']}</li>" for item in values) or "<li>No notifications</li>"
+        return HTMLResponse(_page("Notifications", f"<ul>{body}</ul><a href='/dashboard'>Back</a>"))
 
     @app.get("/api/owner-only")
     async def owner_only(request: Request) -> dict[str, str]:

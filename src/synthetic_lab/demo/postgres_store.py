@@ -111,3 +111,48 @@ class PostgresDemoStore:
                 cursor.execute("SELECT role FROM sul_demo_memberships WHERE account_id=%s AND member_id=%s", (account_id, member_id))
                 row = cursor.fetchone()
         return None if row is None else str(row[0])
+
+    def create_project(self, account_id: str, project_id: str, name: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("INSERT INTO sul_demo_projects(id,account_id,name,created_at) VALUES (%s,%s,%s,%s)", (project_id, account_id, name, self.business_time))
+            connection.commit()
+
+    def create_task(self, project_id: str, task_id: str, title: str, assignee: str | None = None) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("INSERT INTO sul_demo_tasks(id,project_id,title,status,assignee) VALUES (%s,%s,%s,'pending',%s)", (task_id, project_id, title, assignee))
+            connection.commit()
+
+    def complete_task(self, task_id: str) -> None:
+        status = "pending" if self.fault == "task_completion_stale" else "completed"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sul_demo_tasks SET status=%s WHERE id=%s", (status, task_id))
+            connection.commit()
+
+    def invite(self, account_id: str, invitation_id: str, email: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("INSERT INTO sul_demo_invitations(id,account_id,email,status,created_at) VALUES (%s,%s,%s,'pending',%s)", (invitation_id, account_id, email, self.business_time))
+            connection.commit()
+
+    def subscribe(self, account_id: str, subscription_id: str) -> None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("INSERT INTO sul_demo_subscriptions(id,account_id,status,started_at) VALUES (%s,%s,'active',%s)", (subscription_id, account_id, self.business_time))
+            connection.commit()
+
+    def cancel_subscription(self, subscription_id: str) -> None:
+        status = "active" if self.fault == "cancel_ignored" else "cancelled"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sul_demo_subscriptions SET status=%s WHERE id=%s", (status, subscription_id))
+            connection.commit()
+
+    def notifications(self, account_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id,message,read,created_at FROM sul_demo_notifications WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+                rows = cursor.fetchall()
+        return [dict(zip(("id", "message", "read", "created_at"), row)) for row in rows]
