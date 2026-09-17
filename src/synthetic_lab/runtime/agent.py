@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from synthetic_lab.contracts import (
+    Action,
+    AgentDecision,
+    Event,
+    MemoryRecord,
+    MemoryType,
+    PersonaRecord,
+    SessionRecord,
+    SessionStatus,
+    ToolResult,
+    Trust,
+)
+from synthetic_lab.memory.context import MemoryContextAssembler
+
+
+@dataclass(frozen=True)
+class AgentRunResult:
+    status: str
+    reason: str
+    steps: int
+    model_requests: int
+    last_observation_id: str
+
+
+class PersonaAgent:
+    """Executes one persona session with hard budgets and durable checkpoints."""
+
+    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None) -> None:
+        self.model = model
+        self.context = context
+        self.tools = tools
+        self.state = state
+        self.memory = memory
+        self.budgets = budgets
+        self.clock = clock
+
+    async def run(self, persona: PersonaRecord, session: SessionRecord, observation: Any) -> AgentRunResult:
+        steps = 0
+        requests = 0
+        current = session.model_copy(update={"status": SessionStatus.RUNNING})
+        await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
+        while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
+            bundle = await self.context.build(persona, current, observation, self.budgets)
+            try:
+                if hasattr(self.model, "decide_with_repair"):
+                    response = await self.model.decide_with_repair(bundle.messages, generation_options={"num_predict": self.budgets.output_tokens})
+                else:
+                    response = await self.model.decide(bundle.messages, generation_options={"num_predict": self.budgets.output_tokens})
+                requests += 1
+            except Exception as exc:
+                failed = current.model_copy(update={"status": SessionStatus.FAILED})
+                await self.state.append_event(self._event(current, "model_failed", {"error": type(exc).__name__}, steps + 1))
+                await self.state.checkpoint_step(current.id, self._event(current, "session_failed", {"reason": "model_unavailable"}, steps + 2), failed)
+                return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
+            decision: AgentDecision = response.decision
+            if decision.kind.value == "finish":
+                completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
+                await self.state.checkpoint_step(current.id, self._event(current, "session_finished", {"summary": decision.summary}, steps + 1), completed)
+                return AgentRunResult("completed", decision.summary or "finished", steps, requests, observation.id)
+            if decision.kind.value == "blocked":
+                failed = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
+                await self.state.checkpoint_step(current.id, self._event(current, "session_blocked", {"summary": decision.summary}, steps + 1), failed)
+                return AgentRunResult("blocked", decision.summary or "blocked", steps, requests, observation.id)
+            if decision.kind.value == "memory_query":
+                records = await self.memory.search(persona.run_id, persona.id, decision.query or "", 5)
+                await self._write_memory(persona, current, MemoryType.CONVERSATION, f"Memory query: {decision.query}; returned {len(records)} records", steps + 1)
+                steps += 1
+                current = current.model_copy(update={"step_count": steps})
+                continue
+            action = decision.action
+            if action is None:
+                return await self._fail(current, observation, steps, requests, "missing_action")
+            result: ToolResult = await self.tools.dispatch(persona, action)
+            steps += 1
+            event = self._event(current, "tool_result", {"tool_name": action.tool_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)
+            next_status = SessionStatus.RUNNING if result.status.value == "success" else SessionStatus.WAITING
+            current = current.model_copy(update={"status": next_status, "step_count": steps})
+            await self.state.checkpoint_step(current.id, event, current)
+            await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Tool {action.tool_name} returned {result.status.value}: {str(result.data)[:1000]}", steps)
+            if isinstance(result.data, dict) and result.data.get("id") and result.data.get("url"):
+                try:
+                    from synthetic_lab.contracts import Observation
+                    observation = Observation.model_validate(result.data)
+                except Exception:
+                    pass
+            if result.status.value != "success":
+                return AgentRunResult("blocked", result.error_code or "tool_failed", steps, requests, observation.id)
+        reason = "step_budget_exhausted" if steps >= self.budgets.max_steps else "model_request_budget_exhausted"
+        exhausted = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
+        await self.state.checkpoint_step(current.id, self._event(current, "budget_exhausted", {"reason": reason}, steps + 1), exhausted)
+        return AgentRunResult("failed", reason, steps, requests, observation.id)
+
+    async def _fail(self, session: SessionRecord, observation: Any, steps: int, requests: int, reason: str) -> AgentRunResult:
+        failed = session.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
+        await self.state.checkpoint_step(session.id, self._event(session, "session_failed", {"reason": reason}, steps + 1), failed)
+        return AgentRunResult("failed", reason, steps, requests, observation.id)
+
+    async def _write_memory(self, persona: PersonaRecord, session: SessionRecord, memory_type: MemoryType, text: str, sequence: int) -> None:
+        now = datetime.now(timezone.utc)
+        await self.memory.append(MemoryRecord(id=str(uuid.uuid4()), run_id=persona.run_id, persona_id=persona.id, type=memory_type, text=text, structured_data={}, source_event_ids=[f"{session.id}:{sequence}"], trust=Trust.OBSERVED, valid_from=now))
+
+    @staticmethod
+    def _event(session: SessionRecord, kind: str, payload: dict[str, Any], sequence: int) -> Event:
+        now = datetime.now(timezone.utc)
+        return Event(id=str(uuid.uuid4()), run_id=session.run_id, persona_id=session.persona_id, session_id=session.id, sequence=sequence, kind=kind, wall_time=now, business_time=now, payload=payload)

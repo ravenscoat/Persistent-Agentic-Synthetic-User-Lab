@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
+
+from synthetic_lab.contracts import RunRecord, RunStatus
+from synthetic_lab.storage import InMemoryStateRepository
+
+
+class CreateRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scenario_id: str = Field(min_length=1)
+    config_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
+    repository = state or InMemoryStateRepository()
+    app = FastAPI(title="Persistent Synthetic User Lab", version="0.1.0")
+    app.state.repository = repository
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.post("/api/runs", status_code=201)
+    async def create_run(request: CreateRunRequest) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        run = RunRecord(id=str(uuid4()), scenario_id=request.scenario_id, created_at=now, business_time=now, config_snapshot=request.config_snapshot)
+        await repository.create_run(run)
+        return run.model_dump(mode="json")
+
+    @app.get("/api/runs/{run_id}")
+    async def get_run(run_id: str) -> dict[str, Any]:
+        try:
+            return (await repository.get_run(run_id)).model_dump(mode="json")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+
+    async def transition(run_id: str, status: RunStatus) -> dict[str, Any]:
+        try:
+            return (await repository.transition_run(run_id, status)).model_dump(mode="json")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+
+    @app.post("/api/runs/{run_id}/start")
+    async def start_run(run_id: str) -> dict[str, Any]:
+        return await transition(run_id, RunStatus.RUNNING)
+
+    @app.post("/api/runs/{run_id}/pause")
+    async def pause_run(run_id: str) -> dict[str, Any]:
+        return await transition(run_id, RunStatus.PAUSED)
+
+    @app.post("/api/runs/{run_id}/resume")
+    async def resume_run(run_id: str) -> dict[str, Any]:
+        return await transition(run_id, RunStatus.RUNNING)
+
+    @app.post("/api/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str) -> dict[str, Any]:
+        return await transition(run_id, RunStatus.CANCELLED)
+
+    @app.get("/api/runs/{run_id}/events")
+    async def events(run_id: str, after_sequence: int = Query(-1), limit: int = Query(100, ge=1, le=1000)) -> list[dict[str, Any]]:
+        try:
+            await repository.get_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        return [event.model_dump(mode="json") for event in await repository.list_events(run_id, after_sequence, limit)]
+
+    @app.get("/api/runs/{run_id}/findings")
+    async def findings(run_id: str) -> list[dict[str, Any]]:
+        try:
+            await repository.get_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        return [finding.model_dump(mode="json") for finding in repository.findings.values() if finding.run_id == run_id]
+
+    return app
+
+
+app = create_app()

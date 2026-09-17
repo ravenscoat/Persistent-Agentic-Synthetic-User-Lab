@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+*.pyc
+artifacts/
+browser-state/
+*.db
+*.sqlite
+model-cache/
