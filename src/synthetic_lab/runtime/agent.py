@@ -90,6 +90,14 @@ class PersonaAgent:
                     observation = Observation.model_validate(result.data)
                 except Exception:
                     pass
+            if result.status.value == "error" and result.error_code == "stale_observation":
+                # Refresh before asking the model to retry; stale element IDs
+                # are a recoverable browser synchronization issue.
+                refreshed = await self.tools.dispatch(persona, Action(id=str(uuid.uuid4()), tool_name="observe_page"))
+                if isinstance(refreshed.data, dict) and refreshed.data.get("id") and refreshed.data.get("url"):
+                    from synthetic_lab.contracts import Observation
+                    observation = Observation.model_validate(refreshed.data)
+                continue
             if result.status.value != "success":
                 return AgentRunResult("blocked", result.error_code or "tool_failed", steps, requests, observation.id)
         reason = "step_budget_exhausted" if steps >= self.budgets.max_steps else "model_request_budget_exhausted"

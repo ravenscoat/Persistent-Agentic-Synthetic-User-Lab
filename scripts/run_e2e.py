@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,11 +13,13 @@ from uuid import uuid4
 import uvicorn
 
 from synthetic_lab.contracts import Action, AgentDecision, BudgetConfig, DecisionKind, ModelResponse, PersonaRecord, RunRecord, SessionRecord
+from synthetic_lab.config import Settings
 from synthetic_lab.demo.app import create_demo_app
 from synthetic_lab.demo.store import DemoStore
 from synthetic_lab.browser.tools import BrowserToolRegistry, PlaywrightBrowserSession
 from synthetic_lab.memory.context import MemoryContextAssembler
 from synthetic_lab.memory.embeddings import OllamaEmbeddingClient
+from synthetic_lab.llm import build_local_model
 from synthetic_lab.reporting.reports import ReportBuilder
 from synthetic_lab.runtime.agent import PersonaAgent
 from synthetic_lab.storage.in_memory import InMemoryMemoryRepository, InMemoryStateRepository
@@ -72,7 +75,7 @@ class SmokeModel:
         return page.rsplit("Observation: ", 1)[-1].split("\n", 1)[0].strip()
 
 
-async def main() -> int:
+async def main(real_model: bool = False) -> int:
     store = DemoStore(fault="trial_expires_day_5")
     app = create_demo_app(store)
     config = uvicorn.Config(app, host="127.0.0.1", port=8011, log_level="error")
@@ -91,7 +94,8 @@ async def main() -> int:
         await browser.page.goto("http://127.0.0.1:8011/")
         observation = await browser.observe()
         tools = BrowserToolRegistry({persona.id: browser})
-        agent = PersonaAgent(model=SmokeModel(), context=MemoryContextAssembler(memory), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=8))
+        model = build_local_model(Settings()) if real_model else SmokeModel()
+        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=8))
         result = await agent.run(persona, session, observation)
         state_path = await browser.save_state()
         store.advance_days(6)
@@ -106,12 +110,17 @@ async def main() -> int:
         return 0 if result.status == "completed" and verified.verdict == "confirmed" else 1
     finally:
         await browser.close()
+        if real_model and hasattr(model, "aclose"):
+            await model.aclose()
         server.should_exit = True
         await server_task
         store.close()
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--real-model", action="store_true", help="use the configured Ollama model instead of the deterministic smoke policy")
+    args = parser.parse_args()
+    raise SystemExit(asyncio.run(main(real_model=args.real_model)))
     def __init__(self) -> None:
         self.form_step = 0
