@@ -15,6 +15,11 @@ are optional adapters. Oracle is the durable memory store; browser execution use
 Playwright. A separate SQLite database holds the controlled application's business
 state. The prototype falls back to in-memory repositories for local tests.
 
+Set `SUL_MODEL_FALLBACK_NAMES` to a comma-separated list of additional Ollama
+models (for example `qwen2.5:3b`). The configured chain tries the primary model
+first and only uses a fallback after timeout, endpoint failure, throttling, or
+invalid structured output.
+
 ## Run locally
 
 Create the environment and install the test dependencies:
