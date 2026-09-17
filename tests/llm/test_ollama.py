@@ -5,6 +5,7 @@ import pytest
 
 from synthetic_lab.contracts import DecisionKind
 from synthetic_lab.llm.ollama import InvalidModelOutput, ModelUnavailable, OllamaModelClient
+from synthetic_lab.llm.router import FallbackModelClient
 
 
 def response(content: str, **extra: object) -> httpx.Response:
@@ -86,3 +87,19 @@ async def test_invalid_decision_is_rejected() -> None:
     with pytest.raises(InvalidModelOutput):
         await model.decide([])
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fallback_router_uses_second_client_after_unavailable() -> None:
+    class Failing:
+        async def decide(self, *args, **kwargs):
+            raise ModelUnavailable("throttled")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return response('{"kind":"finish","summary":"fallback"}')
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    router = FallbackModelClient([Failing(), OllamaModelClient(client=client)])
+    result = await router.decide([])
+    assert result.decision.summary == "fallback"
+    await router.aclose()
