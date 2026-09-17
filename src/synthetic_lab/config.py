@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     model_name: str = "qwen3:8b"
     model_fallback_names: str = ""
     model_concurrency: int = Field(default=1, ge=1)
+    model_timeout_seconds: float = Field(default=45.0, gt=0)
     browser_origin: str = "http://127.0.0.1:8001"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     oracle_dsn: str | None = None

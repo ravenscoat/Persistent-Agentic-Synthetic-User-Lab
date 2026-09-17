@@ -11,3 +11,4 @@ def test_factory_builds_ordered_local_chain() -> None:
     model = build_local_model(Settings(model_fallback_names="qwen2.5:3b"))
     assert isinstance(model, FallbackModelClient)
     assert [client.model_name for client in model.clients] == ["qwen3:8b", "qwen2.5:3b"]
+    assert model.clients[0].timeout_seconds == 45.0
