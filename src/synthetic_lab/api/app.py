@@ -39,7 +39,7 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
         ) or '<tr><td colspan="4">No runs yet</td></tr>'
         finding_count = len(repository.findings)
         return (
-            "<!doctype html><html><head><meta charset='utf-8'><title>" 
+            "<!doctype html><html><head><meta charset='utf-8'><title>"
             "Synthetic User Lab</title></head><body><main>"
             "<h1>Persistent Synthetic User Lab</h1>"
             f"<p id='run-count'>Runs: {len(runs)} · Findings: {finding_count}</p>"
