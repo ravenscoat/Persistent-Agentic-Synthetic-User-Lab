@@ -30,3 +30,13 @@ def test_dashboard_lists_created_runs() -> None:
     assert dashboard.status_code == 200
     assert run_id in dashboard.text
     assert "payment_retry" in dashboard.text
+
+
+def test_run_listing_and_terminal_transition_guard() -> None:
+    client = TestClient(create_app())
+    created = client.post("/api/runs", json={"scenario_id": "trial_return"}).json()
+    run_id = created["id"]
+    assert client.get("/api/runs").json()[0]["id"] == run_id
+    assert client.post(f"/api/runs/{run_id}/cancel").status_code == 200
+    response = client.post(f"/api/runs/{run_id}/resume")
+    assert response.status_code == 409

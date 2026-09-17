@@ -81,7 +81,15 @@ class OracleStateRepository:
 
     async def transition_run(self, run_id: str, status: RunStatus | str) -> RunRecord:
         run = await self.get_run(run_id)
-        updated = run.model_copy(update={"status": RunStatus(status)})
+        target = RunStatus(status)
+        allowed = {
+            RunStatus.CREATED: {RunStatus.RUNNING, RunStatus.CANCELLED},
+            RunStatus.RUNNING: {RunStatus.PAUSED, RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED},
+            RunStatus.PAUSED: {RunStatus.RUNNING, RunStatus.CANCELLED},
+        }
+        if target != run.status and target not in allowed.get(run.status, set()):
+            raise ValueError(f"invalid run transition: {run.status.value} -> {target.value}")
+        updated = run.model_copy(update={"status": target})
         def update() -> None:
             with self.pool.acquire() as connection:
                 with connection.cursor() as cursor:

@@ -54,6 +54,11 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
         await repository.create_run(run)
         return run.model_dump(mode="json")
 
+    @app.get("/api/runs")
+    async def list_runs(limit: int = Query(100, ge=1, le=1000)) -> list[dict[str, Any]]:
+        runs = sorted(repository.runs.values(), key=lambda item: item.created_at, reverse=True)
+        return [run.model_dump(mode="json") for run in runs[:limit]]
+
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
         try:
@@ -66,6 +71,8 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
             return (await repository.transition_run(run_id, status)).model_dump(mode="json")
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/runs/{run_id}/start")
     async def start_run(run_id: str) -> dict[str, Any]:
