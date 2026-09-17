@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from synthetic_lab.contracts import RunRecord, RunStatus
@@ -25,6 +26,26 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard() -> str:
+        """Small operator view for local demos; production UIs can use the API."""
+        runs = sorted(repository.runs.values(), key=lambda item: item.created_at, reverse=True)
+        rows = "".join(
+            f'<tr><td>{run.id}</td><td>{run.scenario_id}</td><td>{run.status.value}</td>'
+            f'<td><a href="/api/runs/{run.id}/events">events</a> · '
+            f'<a href="/api/runs/{run.id}/findings">findings</a></td></tr>'
+            for run in runs
+        ) or '<tr><td colspan="4">No runs yet</td></tr>'
+        finding_count = len(repository.findings)
+        return (
+            "<!doctype html><html><head><meta charset='utf-8'><title>" 
+            "Synthetic User Lab</title></head><body><main>"
+            "<h1>Persistent Synthetic User Lab</h1>"
+            f"<p id='run-count'>Runs: {len(runs)} · Findings: {finding_count}</p>"
+            "<table><thead><tr><th>ID</th><th>Scenario</th><th>Status</th><th>Links</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table></main></body></html>"
+        )
 
     @app.post("/api/runs", status_code=201)
     async def create_run(request: CreateRunRequest) -> dict[str, Any]:

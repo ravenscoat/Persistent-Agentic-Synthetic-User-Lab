@@ -19,3 +19,14 @@ def test_api_rejects_unknown_fields_and_missing_run() -> None:
     client = TestClient(create_app())
     assert client.post("/api/runs", json={"scenario_id": "x", "unexpected": True}).status_code == 422
     assert client.get("/api/runs/missing").status_code == 404
+
+
+def test_dashboard_lists_created_runs() -> None:
+    client = TestClient(create_app())
+    assert "No runs yet" in client.get("/dashboard").text
+    created = client.post("/api/runs", json={"scenario_id": "payment_retry"})
+    run_id = created.json()["id"]
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    assert run_id in dashboard.text
+    assert "payment_retry" in dashboard.text
