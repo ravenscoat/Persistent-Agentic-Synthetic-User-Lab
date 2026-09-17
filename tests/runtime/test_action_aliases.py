@@ -20,3 +20,10 @@ def test_unknown_model_target_alias_is_rejected() -> None:
     observation = Observation(id="obs-current", run_id="r", session_id="s", url="http://demo", captured_at=now, elements=[])
     with pytest.raises(ValueError, match="target alias"):
         PersonaAgent._resolve_model_target(Action(id="a1", tool_name="click", arguments={"target": "e9"}), observation)
+
+
+def test_legacy_element_id_field_also_accepts_compact_alias() -> None:
+    now = datetime.now(timezone.utc)
+    observation = Observation(id="obs-current", run_id="r", session_id="s", url="http://demo", captured_at=now, elements=[Element(id="real-button", role="button", name="Continue", allowed_actions=["click"])])
+    resolved = PersonaAgent._resolve_model_target(Action(id="a1", tool_name="click", arguments={"element_id": "e1"}), observation)
+    assert resolved.arguments["element_id"] == "real-button"

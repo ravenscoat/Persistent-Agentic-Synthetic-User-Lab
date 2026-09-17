@@ -116,6 +116,8 @@ class PersonaAgent:
             return action
         arguments = dict(action.arguments)
         target = arguments.pop("target", None)
+        if target is None and isinstance(arguments.get("element_id"), str) and arguments["element_id"].startswith("e") and arguments["element_id"][1:].isdigit():
+            target = arguments["element_id"]
         if target is not None:
             if not isinstance(target, str) or not target.startswith("e") or not target[1:].isdigit():
                 raise ValueError("invalid model target alias")

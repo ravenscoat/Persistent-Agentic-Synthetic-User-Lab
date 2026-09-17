@@ -24,3 +24,9 @@ Ollama request completed in about 2.7 seconds with thinking disabled and a
 malformed or stale identifiers; those failures are action-format reliability
 issues, not evidence that the GPU is too slow. Pass `think=True` only for
 deliberation-heavy tasks, not routine browser actions.
+
+The first five-run real-model benchmark completed 0/5 sessions. After compact
+target aliases were added, Qwen selected the correct controls but repeated
+field fills because observations did not expose which inputs already contained
+values. Exposing safe input state and adding progress feedback is the next
+reliability task.
