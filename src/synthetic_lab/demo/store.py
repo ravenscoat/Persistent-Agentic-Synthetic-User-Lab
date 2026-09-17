@@ -25,7 +25,9 @@ class DemoStore:
     """Small resettable business state store used by the demo and verifiers."""
 
     def __init__(self, path: str | Path = ":memory:", *, fault: str | None = None) -> None:
-        self.connection = sqlite3.connect(str(path))
+        # FastAPI/Playwright requests may execute on a worker thread. The demo
+        # store is local and resettable; allow that access pattern explicitly.
+        self.connection = sqlite3.connect(str(path), check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
         self.fault = fault
