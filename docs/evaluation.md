@@ -54,4 +54,6 @@ just the model claiming it finished. This is a small signup-only sample using
 in-memory repositories, not a claim of general browser reliability, Oracle
 restart recovery, or autonomous bug discovery. The smoke script itself
 advances the business clock and invokes the seeded trial-expiry verifier;
-the agent does not independently discover that fault.
+the agent does not independently discover that fault. PostgreSQL is the intended
+durable backend for the next SaaS simulation milestone; tests continue to use
+in-memory repositories for speed.

@@ -15,9 +15,7 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=45.0, gt=0)
     browser_origin: str = "http://127.0.0.1:8001"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    oracle_dsn: str | None = None
-    oracle_user: str | None = None
-    oracle_password: str | None = None
+    postgres_dsn: str | None = None
 
     def ensure_artifact_root(self) -> Path:
         self.artifact_root.mkdir(parents=True, exist_ok=True)

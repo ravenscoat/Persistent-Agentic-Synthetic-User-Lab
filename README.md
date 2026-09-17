@@ -15,8 +15,9 @@ are optional adapters. PostgreSQL is the durable repository for runs and memorie
 while Qdrant is used for semantic/vector retrieval. Browser execution uses
 Playwright. The controlled application's business state currently uses SQLite for
 the deterministic demo; it can be moved to PostgreSQL as the SaaS simulation grows.
-Oracle remains available as an enterprise storage adapter. The prototype falls back
-to in-memory repositories for local tests.
+PostgreSQL is the active durable backend; the prototype falls back to in-memory
+repositories for local tests. The historical Oracle adapter is retained only for
+backward compatibility and is not part of the active deployment path.
 
 Set `SUL_MODEL_FALLBACK_NAMES` to a comma-separated list of additional Ollama
 models (for example `qwen2.5:3b`). The configured chain tries the primary model
