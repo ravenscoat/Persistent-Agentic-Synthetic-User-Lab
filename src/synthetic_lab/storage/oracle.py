@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -124,6 +125,35 @@ class OracleMemoryRepository:
                     cursor.execute("SELECT id,run_id,persona_id,memory_type,text_value,structured_data,source_event_ids,trust,valid_from,valid_to,supersedes_id,status,embedding_model,embedding_dimension FROM sul_memory WHERE run_id=:1 AND (persona_id=:2 OR persona_id IS NULL) AND memory_type=:3 AND status='active' ORDER BY valid_from DESC", [run_id, persona_id, memory_type])
                     rows = cursor.fetchmany(max(0, limit))
             return [_memory(row) for row in rows]
+        return await asyncio.to_thread(read)
+
+    async def search(self, run_id: str, persona_id: str | None, query: str, limit: int) -> list[MemoryRecord]:
+        """Scoped lexical fallback; vector ranking can be layered in later."""
+        terms = set(re.findall(r"[a-z0-9_]+", query.casefold()))
+
+        def read() -> list[MemoryRecord]:
+            with self.pool.acquire() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT id,run_id,persona_id,memory_type,text_value,structured_data,source_event_ids,trust,valid_from,valid_to,supersedes_id,status,embedding_model,embedding_dimension FROM sul_memory WHERE run_id=:1 AND (persona_id=:2 OR persona_id IS NULL) AND status='active' ORDER BY valid_from DESC", [run_id, persona_id])
+                    records = [_memory(row) for row in cursor.fetchall()]
+            scored = [(len(terms & set(re.findall(r"[a-z0-9_]+", item.text.casefold()))), item) for item in records]
+            scored = [(score, item) for score, item in scored if score]
+            scored.sort(key=lambda pair: (-pair[0], -pair[1].valid_from.timestamp(), pair[1].id))
+            return [item for _, item in scored[: max(0, limit)]]
+
+        return await asyncio.to_thread(read)
+
+    async def get_by_ids(self, run_id: str, persona_id: str | None, ids: Sequence[str]) -> list[MemoryRecord]:
+        if not ids:
+            return []
+        binds = ",".join(f":{index + 3}" for index in range(len(ids)))
+
+        def read() -> list[MemoryRecord]:
+            with self.pool.acquire() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(f"SELECT id,run_id,persona_id,memory_type,text_value,structured_data,source_event_ids,trust,valid_from,valid_to,supersedes_id,status,embedding_model,embedding_dimension FROM sul_memory WHERE run_id=:1 AND (persona_id=:2 OR persona_id IS NULL) AND id IN ({binds})", [run_id, persona_id, *ids])
+                    return [_memory(row) for row in cursor.fetchall()]
+
         return await asyncio.to_thread(read)
 
 
