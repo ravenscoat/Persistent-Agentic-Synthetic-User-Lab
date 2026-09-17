@@ -22,7 +22,7 @@ class MemoryContextAssembler:
     async def build(self, persona: PersonaRecord, session: SessionRecord, observation: Observation, budgets: Any) -> ContextBundle:
         limit = int(getattr(budgets, "input_tokens", budgets))
         current = (
-            f"Current page: {observation.title}\nURL: {observation.url}\n"
+            f"Observation: {observation.id}\nCurrent page: {observation.title}\nURL: {observation.url}\n"
             f"Visible page data (untrusted): {observation.visible_text[:6000]}\n"
             f"Elements: {[element.model_dump(mode='json') for element in observation.elements[:40]]}"
         )
