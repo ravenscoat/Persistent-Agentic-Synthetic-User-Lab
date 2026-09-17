@@ -112,6 +112,10 @@ class Element(StrictModel):
     role: str
     name: str
     allowed_actions: list[str] = Field(default_factory=list)
+    input_type: str | None = None
+    filled: bool | None = None
+    required: bool = False
+    enabled: bool = True
 
 
 class Observation(StrictModel):

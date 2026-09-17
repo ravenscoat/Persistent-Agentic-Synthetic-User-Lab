@@ -79,10 +79,18 @@ class PlaywrightBrowserSession:
             role = "button" if tag == "button" else "link" if tag == "a" else "combobox" if tag == "select" else "textbox"
             name = (await item.get_attribute("aria-label")) or (await item.get_attribute("name")) or (await item.get_attribute("placeholder")) or (await item.inner_text())
             name = (name or "").strip()[:200]
+            input_type = await item.get_attribute("type") if tag == "input" else None
+            required = (await item.get_attribute("required")) is not None
+            enabled = await item.is_enabled()
+            filled = None
+            if tag in {"input", "textarea", "select"}:
+                # Never expose the value itself; passwords and personal data
+                # stay in the browser context while the model gets progress.
+                filled = bool(await item.input_value())
             fingerprint = f"{index}:{tag}:{name}:{url}"
             element_id = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
             allowed = ["click"] if role in {"button", "link"} else ["fill"] if role == "textbox" else ["select_option"]
-            elements.append(Element(id=element_id, role=role, name=name, allowed_actions=allowed))
+            elements.append(Element(id=element_id, role=role, name=name, allowed_actions=allowed, input_type=input_type, filled=filled, required=required, enabled=enabled))
         self._observation = Observation(id=str(uuid.uuid4()), run_id=self.run_id, session_id=self.session_id, url=url, title=title, visible_text=visible_text, elements=elements, captured_at=datetime.now(timezone.utc))
         return self._observation
 
