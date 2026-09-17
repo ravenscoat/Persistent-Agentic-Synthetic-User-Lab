@@ -23,6 +23,7 @@ sul-evaluate = "synthetic_lab.evaluation.cli:main"
 test = ["pytest>=8,<9", "pytest-asyncio>=0.24,<1"]
 browser = ["playwright>=1.48,<2"]
 oracle = ["oracledb>=2.5,<3"]
+postgres = ["psycopg[binary]>=3.2,<4"]
 model = ["ollama>=0.4,<1"]
 embeddings = ["sentence-transformers>=3,<4"]
 

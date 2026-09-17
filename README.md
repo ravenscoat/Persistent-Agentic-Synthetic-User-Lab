@@ -11,9 +11,12 @@ and deterministic evaluation harness.
 Start with [ARCHITECTURE.md](ARCHITECTURE.md), then [CONTRACTS.md](CONTRACTS.md), and assign work from [TASKS.md](TASKS.md). Each task has a separate handoff prompt under [tasks](tasks/).
 
 The default design uses a single locally served Qwen3-8B model. External model APIs
-are optional adapters. Oracle is the durable memory store; browser execution uses
-Playwright. A separate SQLite database holds the controlled application's business
-state. The prototype falls back to in-memory repositories for local tests.
+are optional adapters. PostgreSQL is the durable repository for runs and memories,
+while Qdrant is used for semantic/vector retrieval. Browser execution uses
+Playwright. The controlled application's business state currently uses SQLite for
+the deterministic demo; it can be moved to PostgreSQL as the SaaS simulation grows.
+Oracle remains available as an enterprise storage adapter. The prototype falls back
+to in-memory repositories for local tests.
 
 Set `SUL_MODEL_FALLBACK_NAMES` to a comma-separated list of additional Ollama
 models (for example `qwen2.5:3b`). The configured chain tries the primary model
