@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -15,7 +16,7 @@ def response(content: str, **extra: object) -> httpx.Response:
 @pytest.mark.asyncio
 async def test_parses_structured_finish() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.json()["think"] is False
+        assert json.loads(request.content)["think"] is False
         return response('{"kind":"finish","summary":"completed"}', prompt_eval_count=12, eval_count=4)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
