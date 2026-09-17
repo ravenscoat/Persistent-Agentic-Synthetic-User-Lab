@@ -94,7 +94,8 @@ class PlaywrightBrowserSession:
             raise ValueError("element is stale or not in the latest observation")
         if action not in element.allowed_actions:
             raise ValueError("action is not allowed for this element")
-        locator = self.page.locator("button, a, input, select, textarea").nth(int(element_id[-1], 16) if False else next(i for i, item in enumerate(self._observation.elements) if item.id == element_id))
+        index = next(i for i, item in enumerate(self._observation.elements) if item.id == element_id)
+        locator = self.page.locator("button, a, input, select, textarea").nth(index)
         return locator
 
     async def execute(self, action: Action) -> ToolResult:

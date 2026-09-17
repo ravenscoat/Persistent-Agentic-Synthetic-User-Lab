@@ -33,7 +33,11 @@ class OracleStateRepository:
 
     async def apply_migration(self, migration_path: str | Path) -> None:
         sql = Path(migration_path).read_text(encoding="utf-8")
-        statements = [statement.strip() for statement in sql.split(";") if statement.strip() and not statement.lstrip().startswith("--")]
+        # Remove SQL comment-only lines before splitting. Otherwise a comment
+        # immediately before the first CREATE would cause that whole statement
+        # to be discarded by the old prefix check.
+        clean_sql = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+        statements = [statement.strip() for statement in clean_sql.split(";") if statement.strip()]
 
         def apply() -> None:
             with self.pool.acquire() as connection:

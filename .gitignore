@@ -4,6 +4,7 @@ __pycache__/
 .env
 *.pyc
 artifacts/
+outputs/
 browser-state/
 *.db
 *.sqlite
