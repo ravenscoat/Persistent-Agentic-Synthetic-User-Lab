@@ -24,6 +24,21 @@ models (for example `qwen2.5:3b`). The configured chain tries the primary model
 first and only uses a fallback after timeout, endpoint failure, throttling, or
 invalid structured output.
 
+## Start PostgreSQL
+
+Install the optional driver and start the local database:
+
+\`\`\`powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[postgres]"
+docker compose -f docker-compose.postgres.yml up -d
+$env:SUL_POSTGRES_DSN = "postgresql://synthetic_lab:synthetic_lab@localhost:5432/synthetic_lab"
+.\.venv\Scripts\python.exe scripts/prepare_postgres.py
+\`\`\`
+
+With SUL_POSTGRES_DSN set, the demo app uses PostgreSQL for business state.
+The same seeded faults can be selected with SUL_BUSINESS_FAULT, for example
+duplicate_charge or owner_transfer_leak.
+
 ## Run locally
 
 Create the environment and install the test dependencies:
