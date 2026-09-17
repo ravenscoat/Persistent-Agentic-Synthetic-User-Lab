@@ -15,6 +15,9 @@ dependencies = [
   "python-multipart>=0.0.20,<1",
 ]
 
+[project.scripts]
+sul-evaluate = "synthetic_lab.evaluation.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest>=8,<9", "pytest-asyncio>=0.24,<1"]
 browser = ["playwright>=1.48,<2"]
