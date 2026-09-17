@@ -18,7 +18,8 @@ def run_once(timeout: int) -> dict[str, object]:
             report = json.loads(completed.stdout)
             row["agent"] = report.get("agent")
             row["verification"] = report.get("verification")
-            row["completed"] = report.get("agent", {}).get("status") == "completed"
+            row["completed"] = completed.returncode == 0 and report.get("signup_verified") is True and report.get("agent", {}).get("status") == "completed"
+            row["actions"] = report.get("actions", [])
         except json.JSONDecodeError:
             row["completed"] = False
             row["error_tail"] = (completed.stderr or completed.stdout)[-1000:]

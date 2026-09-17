@@ -32,7 +32,7 @@ class AgentRunResult:
 class PersonaAgent:
     """Executes one persona session with hard budgets and durable checkpoints."""
 
-    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None) -> None:
+    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None, completion_check: Any | None = None) -> None:
         self.model = model
         self.context = context
         self.tools = tools
@@ -40,14 +40,20 @@ class PersonaAgent:
         self.memory = memory
         self.budgets = budgets
         self.clock = clock
+        self.completion_check = completion_check
 
     async def run(self, persona: PersonaRecord, session: SessionRecord, observation: Any) -> AgentRunResult:
         steps = 0
         requests = 0
+        feedback = ""
+        corrections = 0
+        last_fill = None
         current = session.model_copy(update={"status": SessionStatus.RUNNING})
         await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
         while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
             bundle = await self.context.build(persona, current, observation, self.budgets)
+            if feedback:
+                bundle.messages.append({"role": "user", "content": feedback})
             try:
                 if hasattr(self.model, "decide_with_repair"):
                     response = await self.model.decide_with_repair(bundle.messages, generation_options={"num_predict": self.budgets.output_tokens})
@@ -61,6 +67,12 @@ class PersonaAgent:
                 return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
             decision: AgentDecision = response.decision
             if decision.kind.value == "finish":
+                if self.completion_check and not await self.completion_check():
+                    corrections += 1
+                    if corrections > 2:
+                        return await self._fail(current, observation, steps, requests, "progress_repair_exhausted")
+                    feedback = f"Completion check failed. You are still at {observation.url}. Filling fields does not submit the form. If required fields are filled, choose the submit button. Return an action decision until the requested destination is visible."
+                    continue
                 completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
                 await self.state.checkpoint_step(current.id, self._event(current, "session_finished", {"summary": decision.summary}, steps + 1), completed)
                 return AgentRunResult("completed", decision.summary or "finished", steps, requests, observation.id)
@@ -81,13 +93,24 @@ class PersonaAgent:
                 action = self._resolve_model_target(action, observation)
             except ValueError:
                 return await self._fail(current, observation, steps, requests, "invalid_action_target")
+            signature = (observation.url, action.arguments.get("element_id"), action.arguments.get("value"))
+            if action.tool_name == "fill" and signature == last_fill:
+                corrections += 1
+                if corrections > 2:
+                    return await self._fail(current, observation, steps, requests, "progress_repair_exhausted")
+                feedback = "That exact fill already succeeded. Choose another incomplete field or submit the completed form. Do not repeat the same value in the same field."
+                continue
+            feedback = ""
             result: ToolResult = await self.tools.dispatch(persona, action)
+            last_fill = signature if action.tool_name == "fill" and result.status.value == "success" else None
+            target_element = next((element for element in observation.elements if element.id == action.arguments.get("element_id")), None)
+            target_name = target_element.name if target_element else action.tool_name
             steps += 1
-            event = self._event(current, "tool_result", {"tool_name": action.tool_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)
+            event = self._event(current, "tool_result", {"tool_name": action.tool_name, "target_name": target_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)
             next_status = SessionStatus.RUNNING if result.status.value == "success" else SessionStatus.WAITING
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)
-            await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Tool {action.tool_name} returned {result.status.value}: {str(result.data)[:1000]}", steps)
+            await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Step {steps}: {action.tool_name} on {target_name!r}: {result.status.value}. Use the CURRENT observation for field state and targets.", steps)
             if isinstance(result.data, dict) and result.data.get("id") and result.data.get("url"):
                 try:
                     from synthetic_lab.contracts import Observation

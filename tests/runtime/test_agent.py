@@ -23,6 +23,28 @@ class FakeTools:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_fill", [True, False])
+async def test_progress_repairs_are_bounded_and_do_not_repeat_writes(repeat_fill):
+    from synthetic_lab.contracts import Element
+    now = datetime.now(timezone.utc)
+    state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
+    await state.create_run(RunRecord(id="r", scenario_id="signup", created_at=now, business_time=now))
+    session = SessionRecord(id="s", run_id="r", persona_id="p", phase="signup", due_business_time=now)
+    await state.enqueue_session(session)
+    persona = PersonaRecord(id="p", run_id="r", kind="test", goal="signup", application_account_id="a")
+    observation = Observation(id="o", run_id="r", session_id="s", url="http://demo/signup", captured_at=now, elements=[Element(id="email", role="textbox", name="Email", allowed_actions=["fill"])])
+    decision = AgentDecision(kind="action", action=Action(id="a", tool_name="fill", arguments={"target": "e1", "value": "example"})) if repeat_fill else AgentDecision(kind="finish", summary="done")
+    async def incomplete():
+        return False
+    agent = PersonaAgent(model=ScriptedModel([decision] * 5), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(), completion_check=incomplete)
+    result = await agent.run(persona, session, observation)
+    assert result.reason == "progress_repair_exhausted"
+    assert result.steps == (1 if repeat_fill else 0)
+    assert result.model_requests == (4 if repeat_fill else 3)
+    assert len([e for e in await state.list_events("r") if e.kind == "tool_result"]) == result.steps
+
+
+@pytest.mark.asyncio
 async def test_agent_checkpoints_tool_and_finish() -> None:
     now = datetime.now(timezone.utc)
     state = InMemoryStateRepository()

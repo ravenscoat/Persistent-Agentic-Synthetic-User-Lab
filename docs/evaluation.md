@@ -28,5 +28,30 @@ deliberation-heavy tasks, not routine browser actions.
 The first five-run real-model benchmark completed 0/5 sessions. After compact
 target aliases were added, Qwen selected the correct controls but repeated
 field fills because observations did not expose which inputs already contained
-values. Exposing safe input state and adding progress feedback is the next
-reliability task.
+values. Safe input state alone was insufficient: the model also treated filled
+fields as completed signup without submitting the form.
+
+The follow-up fix aligns tool schemas with target aliases, puts current page
+state after compact action history, explicitly describes form progress, and
+bounds repeated-fill and premature-finish corrections. The signup smoke uses
+an independent database and dashboard check before accepting completion.
+
+The final five-run local Qwen3-8B benchmark completed **5/5 signups**, with four
+browser actions per run and elapsed times of **11.81–12.86 seconds**. Runs used
+6–7 model decisions; correction requests remain necessary. The scripted smoke
+also passed, and the regression suite passed 49 tests.
+
+Reproduce sequentially (both scripts use local port 8011):
+
+```powershell
+python scripts/benchmark_real.py --runs 5 --timeout 90
+python scripts/run_e2e.py
+```
+
+The benchmark saves sanitized action traces to
+`artifacts/real-model-benchmark.json`. Success requires verified signup, not
+just the model claiming it finished. This is a small signup-only sample using
+in-memory repositories, not a claim of general browser reliability, Oracle
+restart recovery, or autonomous bug discovery. The smoke script itself
+advances the business clock and invokes the seeded trial-expiry verifier;
+the agent does not independently discover that fault.

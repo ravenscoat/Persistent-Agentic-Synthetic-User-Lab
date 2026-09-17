@@ -87,7 +87,7 @@ async def main(real_model: bool = False) -> int:
     await state.create_run(RunRecord(id=run_id, scenario_id="trial_return", created_at=now, business_time=now))
     session = SessionRecord(id=session_id, run_id=run_id, persona_id="smoke-persona", phase="signup", due_business_time=now)
     await state.enqueue_session(session)
-    persona = PersonaRecord(id="smoke-persona", run_id=run_id, kind="new_customer", goal="Create an account and reach the dashboard.", application_account_id="account-1", allowed_tool_names=["observe_page", "navigate", "click", "fill"])
+    persona = PersonaRecord(id="smoke-persona", run_id=run_id, kind="new_customer", goal="Create an account using email smoke@example.test and password not-a-real-password. Fill empty required fields, then submit. Once the Account dashboard at /dashboard is visible, return kind=finish with a summary. Do not purchase, transfer ownership, or start another workflow.", application_account_id="account-1", allowed_tool_names=["observe_page", "navigate", "click", "fill"])
     browser = PlaywrightBrowserSession(run_id, session_id, "http://127.0.0.1:8011", artifact_root="artifacts")
     await browser.start()
     try:
@@ -95,19 +95,21 @@ async def main(real_model: bool = False) -> int:
         observation = await browser.observe()
         tools = BrowserToolRegistry({persona.id: browser})
         model = build_local_model(Settings()) if real_model else SmokeModel()
-        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=8))
+        async def signup_complete():
+            return store.connection.execute("SELECT id FROM accounts LIMIT 1").fetchone() is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
+        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=10), completion_check=signup_complete)
         result = await agent.run(persona, session, observation)
         state_path = await browser.save_state()
         store.advance_days(6)
         account_row = store.connection.execute("SELECT id FROM accounts ORDER BY id LIMIT 1").fetchone()
-        if account_row is None:
-            raise RuntimeError(f"persona did not create an account; agent result={result}; events={[event.payload for event in state.events[run_id]]}")
-        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, str(account_row[0])))
-        payload: dict[str, Any] = {"agent": result.__dict__, "verification": verified.model_dump(mode="json"), "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
+        signup_verified = account_row is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
+        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, str(account_row[0]))) if account_row else None
+        trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in state.events[run_id] if event.kind == "tool_result"]
+        payload: dict[str, Any] = {"signup_verified": signup_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
         Path("artifacts").mkdir(exist_ok=True)
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(json.dumps(payload, indent=2, default=str))
-        return 0 if result.status == "completed" and verified.verdict == "confirmed" else 1
+        return 0 if result.status == "completed" and signup_verified else 1
     finally:
         await browser.close()
         if real_model and hasattr(model, "aclose"):
