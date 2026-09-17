@@ -156,6 +156,22 @@ class OracleMemoryRepository:
 
         return await asyncio.to_thread(read)
 
+    async def supersede(self, run_id: str, persona_id: str | None, old_id: str, new_record: MemoryRecord) -> MemoryRecord:
+        if new_record.run_id != run_id or new_record.persona_id != persona_id or new_record.supersedes_id != old_id:
+            raise ValueError("superseding record scope or reference does not match")
+
+        def replace() -> MemoryRecord:
+            with self.pool.acquire() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE sul_memory SET status='superseded' WHERE id=:1 AND run_id=:2 AND (persona_id=:3 OR persona_id IS NULL) AND status='active'", [old_id, run_id, persona_id])
+                    if cursor.rowcount != 1:
+                        raise KeyError(old_id)
+                    cursor.execute("INSERT INTO sul_memory (id, run_id, persona_id, memory_type, text_value, structured_data, source_event_ids, trust, valid_from, valid_to, supersedes_id, status, embedding_model, embedding_dimension) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,:13,:14)", [new_record.id, new_record.run_id, new_record.persona_id, new_record.type.value, new_record.text, json.dumps(new_record.structured_data), json.dumps(new_record.source_event_ids), new_record.trust.value, new_record.valid_from, new_record.valid_to, new_record.supersedes_id, new_record.status.value, new_record.embedding_model, new_record.embedding_dimension])
+                connection.commit()
+            return new_record
+
+        return await asyncio.to_thread(replace)
+
 
 def _memory(row: Sequence[Any]) -> MemoryRecord:
     from synthetic_lab.contracts import MemoryType, Trust
