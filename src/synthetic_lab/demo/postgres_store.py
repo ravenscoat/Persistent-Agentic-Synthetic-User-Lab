@@ -55,6 +55,12 @@ class PostgresDemoStore:
                     raise KeyError(account_id)
                 return dict(zip(("id", "email", "password", "trial_start", "trial_days", "plan", "onboarding_step"), row))
 
+    def account_exists(self, account_id: str | None = None) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM sul_demo_accounts" + (" WHERE id=%s" if account_id else "") + " LIMIT 1", (account_id,) if account_id else ())
+                return cursor.fetchone() is not None
+
     def trial_active(self, account_id: str) -> bool:
         account = self.account(account_id)
         duration = 5 if self.fault == "trial_expires_day_5" else account["trial_days"]

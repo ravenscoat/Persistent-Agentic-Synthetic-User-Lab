@@ -96,14 +96,14 @@ async def main(real_model: bool = False) -> int:
         tools = BrowserToolRegistry({persona.id: browser})
         model = build_local_model(Settings()) if real_model else SmokeModel()
         async def signup_complete():
-            return store.connection.execute("SELECT id FROM accounts LIMIT 1").fetchone() is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
+            return store.account_exists() and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
         agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=10), completion_check=signup_complete)
         result = await agent.run(persona, session, observation)
         state_path = await browser.save_state()
         store.advance_days(6)
-        account_row = store.connection.execute("SELECT id FROM accounts ORDER BY id LIMIT 1").fetchone()
-        signup_verified = account_row is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
-        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, str(account_row[0]))) if account_row else None
+        account_id = "account-1" if store.account_exists("account-1") else None
+        signup_verified = account_id is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
+        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, account_id)) if account_id else None
         trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in state.events[run_id] if event.kind == "tool_result"]
         payload: dict[str, Any] = {"signup_verified": signup_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
         Path("artifacts").mkdir(exist_ok=True)

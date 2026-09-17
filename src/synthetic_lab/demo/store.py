@@ -52,6 +52,13 @@ class DemoStore:
             raise KeyError(account_id)
         return dict(row)
 
+    def account_exists(self, account_id: str | None = None) -> bool:
+        if account_id is None:
+            row = self.connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
+        else:
+            row = self.connection.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        return row is not None
+
     def trial_active(self, account_id: str) -> bool:
         account = self.account(account_id)
         duration = 5 if self.fault == "trial_expires_day_5" else account["trial_days"]
