@@ -62,7 +62,11 @@ class OllamaModelClient:
 
     async def decide(self, messages: Sequence[dict[str, Any]], decision_schema: dict[str, Any] | None = None, generation_options: dict[str, Any] | None = None) -> ModelResponse:
         schema = decision_schema or AgentDecision.model_json_schema()
-        payload: dict[str, Any] = {"model": self.model_name, "messages": list(messages), "stream": False, "format": schema, "options": dict(generation_options or {})}
+        options = dict(generation_options or {})
+        # Action selection is latency-sensitive. Qwen3 thinking remains
+        # available by passing ``think=True`` explicitly.
+        think = bool(options.pop("think", False))
+        payload: dict[str, Any] = {"model": self.model_name, "messages": list(messages), "stream": False, "think": think, "format": schema, "options": options}
         started = time.perf_counter()
         async with self._semaphore:
             try:
