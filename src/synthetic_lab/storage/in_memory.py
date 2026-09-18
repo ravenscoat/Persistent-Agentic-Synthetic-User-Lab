@@ -166,6 +166,12 @@ class InMemoryMemoryRepository:
             values.sort(key=lambda r: (r.valid_from, r.id), reverse=True)
             return copy.deepcopy(values[: max(0, limit)])
 
+    async def list_active(self, run_id: str, limit: int = 1000) -> list[MemoryRecord]:
+        async with self._lock:
+            values = [record for record in self.records.values() if record.run_id == run_id and record.status is MemoryStatus.ACTIVE]
+            values.sort(key=lambda record: (record.valid_from, record.id))
+            return copy.deepcopy(values[: max(0, limit)])
+
     async def get_by_ids(self, run_id: str, persona_id: str | None, ids: Sequence[str]) -> list[MemoryRecord]:
         async with self._lock:
             return copy.deepcopy([self.records[item] for item in ids if item in self.records and self._visible(self.records[item], run_id, persona_id)])

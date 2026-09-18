@@ -22,3 +22,17 @@ its PostgreSQL memory repository with `HybridMemoryRepository` and a
 `QdrantSemanticIndex` using the configured embedding client. The collection is
 created only after the first embedding and rejects an embedding-dimension change
 instead of silently mixing incompatible vectors.
+
+## Backfill after enabling Qdrant
+
+Existing PostgreSQL memory is intentionally not copied during normal agent
+startup. Run this explicit, non-destructive operation per run after Qdrant and
+the embedding model are available:
+
+```powershell
+.venv\Scripts\python.exe scripts\reindex_qdrant.py <run-id>
+```
+
+Only active memory is indexed. The command reports `truncated=true` when the
+chosen limit would leave records behind, so an operator cannot mistake a partial
+backfill for a complete one.

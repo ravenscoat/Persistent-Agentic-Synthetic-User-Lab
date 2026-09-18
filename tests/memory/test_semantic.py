@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from synthetic_lab.contracts import MemoryRecord, MemoryType, Trust
-from synthetic_lab.memory.semantic import HybridMemoryRepository, SemanticIndexUnavailable
+from synthetic_lab.memory.semantic import HybridMemoryRepository, SemanticIndexUnavailable, reindex_run
 from synthetic_lab.storage import InMemoryMemoryRepository
 
 
@@ -73,3 +73,18 @@ async def test_embedded_qdrant_indexes_and_retrieves_real_vectors():
     values = await memory.search("run", "alice", "billing", 1)
     assert [item.id for item in values] == ["opaque-billing-id"]
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_reindex_only_writes_active_memory_and_reports_limit():
+    primary = InMemoryMemoryRepository()
+    active = record("active", "alice", "active billing note")
+    old = record("old", "alice", "old billing note").model_copy(update={"status": "superseded"})
+    await primary.append(active)
+    await primary.append(old)
+    index = FakeSemanticIndex()
+    result = await reindex_run(primary, index, "run", limit=1)
+    assert result.indexed == 1
+    assert result.failed == 0
+    assert result.truncated is False
+    assert index.indexed == ["active"]

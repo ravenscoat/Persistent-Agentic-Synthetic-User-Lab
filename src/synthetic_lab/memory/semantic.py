@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any, Protocol
+from dataclasses import dataclass
 from uuid import NAMESPACE_URL, uuid5
 
 from synthetic_lab.contracts import MemoryRecord
@@ -17,6 +18,13 @@ class SemanticIndex(Protocol):
     async def upsert(self, record: MemoryRecord) -> None: ...
     async def search(self, run_id: str, query: str, limit: int) -> list[str]: ...
     async def delete(self, memory_id: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class ReindexResult:
+    indexed: int
+    failed: int
+    truncated: bool
 
 
 class QdrantSemanticIndex:
@@ -168,6 +176,29 @@ def with_optional_qdrant(primary: Any, settings: Any) -> Any:
         embedding_model=settings.embedding_model,
     )
     return HybridMemoryRepository(primary, index)
+
+
+async def reindex_run(primary: Any, semantic_index: SemanticIndex, run_id: str, *, limit: int = 10000) -> ReindexResult:
+    """Index current PostgreSQL memories without changing their source records.
+
+    This is an operator-only repair/backfill operation. It deliberately indexes
+    only active records, so superseded and deleted facts do not return through
+    semantic retrieval after an index rebuild.
+    """
+    if limit <= 0:
+        return ReindexResult(indexed=0, failed=0, truncated=False)
+    if not hasattr(primary, "list_active"):
+        raise TypeError("primary repository does not support administrative active-memory listing")
+    records = await primary.list_active(run_id, limit=limit + 1)
+    truncated = len(records) > limit
+    indexed = failed = 0
+    for record in records[:limit]:
+        try:
+            await semantic_index.upsert(record)
+            indexed += 1
+        except SemanticIndexUnavailable:
+            failed += 1
+    return ReindexResult(indexed=indexed, failed=failed, truncated=truncated)
 
 
 def _point_id(memory_id: str) -> str:

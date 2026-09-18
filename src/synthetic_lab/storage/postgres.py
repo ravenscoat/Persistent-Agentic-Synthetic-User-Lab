@@ -254,6 +254,16 @@ class PostgresMemoryRepository:
             (run_id, persona_id, memory_type, max(0, limit)),
         )
 
+    async def list_active(self, run_id: str, limit: int = 1000) -> list[MemoryRecord]:
+        """Administrative backfill read; runtime retrieval remains scoped."""
+        return await self._read(
+            """SELECT id,run_id,persona_id,memory_type,text_value,structured_data,
+            source_event_ids,trust,valid_from,valid_to,supersedes_id,status,
+            embedding_model,embedding_dimension FROM sul_memory
+            WHERE run_id=%s AND status='active' ORDER BY valid_from,id LIMIT %s""",
+            (run_id, max(0, limit)),
+        )
+
     async def search(self, run_id: str, persona_id: str | None, query: str, limit: int) -> list[MemoryRecord]:
         records = await self._read(
             """SELECT id,run_id,persona_id,memory_type,text_value,structured_data,
