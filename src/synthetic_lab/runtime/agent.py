@@ -79,7 +79,11 @@ class PersonaAgent:
                 requests += 1
             except Exception as exc:
                 failed = current.model_copy(update={"status": SessionStatus.FAILED})
-                await self.state.append_event(await self._new_event(current, "model_failed", {"error": type(exc).__name__}))
+                await self.state.append_event(await self._new_event(
+                    current,
+                    "model_failed",
+                    {"error": type(exc).__name__, "message": str(exc)[:300]},
+                ))
                 await self.state.checkpoint_step(current.id, await self._new_event(current, "session_failed", {"reason": "model_unavailable"}), failed)
                 return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
             decision: AgentDecision = response.decision

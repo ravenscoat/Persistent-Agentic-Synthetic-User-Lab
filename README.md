@@ -74,3 +74,8 @@ Run tests and the deterministic scenario evaluation:
 The evaluation executes each scenario once against healthy state and once with
 its seeded fault. The independent verifier must report `satisfied` for healthy
 state and `confirmed` for the fault. See [docs/evaluation.md](docs/evaluation.md).
+
+For the concurrent two-browser Qwen proof, see
+[docs/two-persona-transfer.md](docs/two-persona-transfer.md). It demonstrates
+two concurrent scheduler leases, isolated persistent memories, unique run-wide
+event sequences, and an independent PostgreSQL-backed permission verifier.

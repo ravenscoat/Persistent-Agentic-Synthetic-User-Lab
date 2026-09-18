@@ -37,6 +37,8 @@ async def test_repair_is_bounded_to_one_retry() -> None:
         calls += 1
         if calls == 1:
             return response("not json")
+        repair = json.loads(request.content)["messages"][-1]["content"]
+        assert "non-empty summary" in repair
         return response('{"kind":"finish","summary":"repaired"}')
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))

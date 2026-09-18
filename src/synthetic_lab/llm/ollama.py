@@ -86,11 +86,16 @@ class OllamaModelClient:
             body = response.json()
         except (httpx.HTTPStatusError, ValueError) as exc:
             raise InvalidModelOutput("Ollama returned an invalid response") from exc
+        content: Any = None
         try:
             content = body["message"]["content"]
             decision = AgentDecision.model_validate(_json_object(content))
         except (KeyError, TypeError, ValidationError, InvalidModelOutput) as exc:
-            raise InvalidModelOutput("Ollama response did not contain a valid decision") from exc
+            # Generated output is diagnostic metadata, not user/page content.
+            # Keep it short so a malformed model reply can be debugged without
+            # turning durable events into prompt logs.
+            preview = str(content).replace("\n", " ")[:240] if content is not None else "<missing>"
+            raise InvalidModelOutput(f"Ollama response did not contain a valid decision: {preview}") from exc
         prompt_tokens = body.get("prompt_eval_count")
         output_tokens = body.get("eval_count")
         estimated = not isinstance(prompt_tokens, int) or not isinstance(output_tokens, int)
@@ -105,5 +110,13 @@ class OllamaModelClient:
         try:
             return await self.decide(messages, decision_schema, generation_options)
         except InvalidModelOutput:
-            repair = repair_message or {"role": "user", "content": "Return exactly one JSON object matching the required decision schema. Do not include markdown or explanation."}
+            repair = repair_message or {
+                "role": "user",
+                "content": (
+                    "Return exactly one JSON object matching the required decision schema. "
+                    "Do not include markdown or explanation. If kind is finish or blocked, "
+                    "include a non-empty summary string. If kind is memory_query, include a "
+                    "non-empty query string. If kind is action, include an action object."
+                ),
+            }
             return await self.decide([*messages, repair], decision_schema, generation_options)
