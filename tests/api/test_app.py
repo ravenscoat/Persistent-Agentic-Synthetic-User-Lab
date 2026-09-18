@@ -32,6 +32,17 @@ def test_dashboard_lists_created_runs() -> None:
     assert "payment_retry" in dashboard.text
 
 
+def test_run_summary_aggregates_persona_actions_and_memory_ids() -> None:
+    state = InMemoryStateRepository()
+    client = TestClient(create_app(state))
+    run = client.post("/api/runs", json={"scenario_id": "shared"}).json()
+    run_id = run["id"]
+    response = client.get(f"/api/runs/{run_id}/summary")
+    assert response.status_code == 200
+    assert response.json()["event_count"] == 0
+    assert response.json()["event_sequences_unique"] is True
+
+
 def test_run_listing_and_terminal_transition_guard() -> None:
     client = TestClient(create_app())
     created = client.post("/api/runs", json={"scenario_id": "trial_return"}).json()

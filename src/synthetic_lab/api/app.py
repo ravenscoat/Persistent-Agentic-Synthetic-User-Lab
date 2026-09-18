@@ -106,6 +106,27 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="run not found") from exc
         return [finding.model_dump(mode="json") for finding in repository.findings.values() if finding.run_id == run_id]
 
+    @app.get("/api/runs/{run_id}/summary")
+    async def run_summary(run_id: str) -> dict[str, Any]:
+        """Return a compact operator view without exposing full page text."""
+        try:
+            await repository.get_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        events = await repository.list_events(run_id, limit=1000)
+        personas: dict[str, dict[str, Any]] = {}
+        for event in events:
+            persona_id = event.persona_id or "unassigned"
+            item = personas.setdefault(persona_id, {"event_count": 0, "action_count": 0, "model_latency_ms": 0.0, "retrieved_memory_ids": []})
+            item["event_count"] += 1
+            if event.kind == "tool_result":
+                item["action_count"] += 1
+                item["model_latency_ms"] += float(event.payload.get("model_latency_ms") or 0)
+            for memory_id in event.payload.get("retrieved_memory_ids", []):
+                if memory_id not in item["retrieved_memory_ids"]:
+                    item["retrieved_memory_ids"].append(memory_id)
+        return {"run_id": run_id, "event_count": len(events), "event_sequences_unique": len({event.sequence for event in events}) == len(events), "personas": personas, "findings": [finding.model_dump(mode="json") for finding in repository.findings.values() if finding.run_id == run_id]}
+
     return app
 
 
