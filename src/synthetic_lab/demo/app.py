@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .postgres_store import PostgresDemoStore
@@ -163,7 +163,7 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         current_id = account_id(request)
         member_id = request.cookies.get("member_id", "")
         if business.role(current_id, member_id) != "owner":
-            return {"error": "forbidden"}
+            raise HTTPException(status_code=403, detail="owner access required")
         return {"status": "owner access granted"}
 
     return app
