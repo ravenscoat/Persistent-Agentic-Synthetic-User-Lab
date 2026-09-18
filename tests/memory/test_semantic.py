@@ -52,3 +52,24 @@ async def test_secondary_index_failure_keeps_authoritative_write_and_uses_lexica
     assert saved.id == "m1"
     values = await memory.search("run", "alice", "cancel subscription", 3)
     assert [item.id for item in values] == ["m1"]
+
+
+@pytest.mark.asyncio
+async def test_embedded_qdrant_indexes_and_retrieves_real_vectors():
+    qdrant = pytest.importorskip("qdrant_client")
+
+    class FixedEmbedder:
+        async def embed(self, text):
+            values = [text] if isinstance(text, str) else text
+            return [[1.0, 0.0] if "billing" in value else [0.0, 1.0] for value in values]
+
+    from synthetic_lab.memory.semantic import QdrantSemanticIndex
+
+    client = qdrant.AsyncQdrantClient(location=":memory:")
+    primary = InMemoryMemoryRepository()
+    memory = HybridMemoryRepository(primary, QdrantSemanticIndex(client, FixedEmbedder(), collection="test_memory"))
+    await memory.append(record("opaque-billing-id", "alice", "billing cancellation"))
+    await memory.append(record("opaque-project-id", "alice", "project creation"))
+    values = await memory.search("run", "alice", "billing", 1)
+    assert [item.id for item in values] == ["opaque-billing-id"]
+    await client.close()

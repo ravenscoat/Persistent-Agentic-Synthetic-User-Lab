@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any, Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 from synthetic_lab.contracts import MemoryRecord
 from .embeddings import OllamaEmbeddingClient
@@ -50,7 +51,7 @@ class QdrantSemanticIndex:
             from qdrant_client.models import PointStruct
             await self.client.upsert(
                 collection_name=self.collection,
-                points=[PointStruct(id=record.id, vector=vector, payload={"run_id": record.run_id, "persona_id": record.persona_id})],
+                points=[PointStruct(id=_point_id(record.id), vector=vector, payload={"memory_id": record.id, "run_id": record.run_id, "persona_id": record.persona_id})],
             )
         except Exception as exc:  # pragma: no cover - network/client dependent
             raise SemanticIndexUnavailable("could not write Qdrant memory vector") from exc
@@ -69,17 +70,17 @@ class QdrantSemanticIndex:
                 query=vector,
                 query_filter=Filter(must=[FieldCondition(key="run_id", match=MatchValue(value=run_id))]),
                 limit=limit,
-                with_payload=False,
+                with_payload=["memory_id"],
                 with_vectors=False,
             )
-            return [str(point.id) for point in response.points]
+            return [str(point.payload["memory_id"]) for point in response.points if point.payload and point.payload.get("memory_id")]
         except Exception as exc:  # pragma: no cover - network/client dependent
             raise SemanticIndexUnavailable("could not query Qdrant memory vectors") from exc
 
     async def delete(self, memory_id: str) -> None:
         try:
             from qdrant_client.models import PointIdsList
-            await self.client.delete(collection_name=self.collection, points_selector=PointIdsList(points=[memory_id]))
+            await self.client.delete(collection_name=self.collection, points_selector=PointIdsList(points=[_point_id(memory_id)]))
         except Exception as exc:  # pragma: no cover - network/client dependent
             raise SemanticIndexUnavailable("could not delete Qdrant memory vector") from exc
 
@@ -167,3 +168,8 @@ def with_optional_qdrant(primary: Any, settings: Any) -> Any:
         embedding_model=settings.embedding_model,
     )
     return HybridMemoryRepository(primary, index)
+
+
+def _point_id(memory_id: str) -> str:
+    """Qdrant point IDs are UUIDs/integers; contracts permit opaque IDs."""
+    return str(uuid5(NAMESPACE_URL, memory_id))
