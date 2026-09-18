@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -104,3 +105,39 @@ async def test_agent_resumes_from_durable_step_without_duplicate_start_event() -
     events = await state.list_events("resume-run", limit=20)
     assert [event.sequence for event in events] == [0, 1, 2]
     assert [event.kind for event in events].count("session_started") == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_personas_allocate_unique_run_wide_event_sequences() -> None:
+    now = datetime.now(timezone.utc)
+    state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
+    await state.create_run(RunRecord(id="shared-run", scenario_id="trial_return", created_at=now, business_time=now))
+    personas = [
+        PersonaRecord(id="p-one", run_id="shared-run", kind="customer", goal="test", application_account_id="a-one", allowed_tool_names=["observe_page"]),
+        PersonaRecord(id="p-two", run_id="shared-run", kind="customer", goal="test", application_account_id="a-two", allowed_tool_names=["observe_page"]),
+    ]
+    sessions = [
+        SessionRecord(id="s-one", run_id="shared-run", persona_id="p-one", phase="start", due_business_time=now),
+        SessionRecord(id="s-two", run_id="shared-run", persona_id="p-two", phase="start", due_business_time=now),
+    ]
+    for session in sessions:
+        await state.enqueue_session(session)
+    observations = [
+        Observation(id=f"o-{index}", run_id="shared-run", session_id=session.id, url="http://demo/", captured_at=now)
+        for index, session in enumerate(sessions, start=1)
+    ]
+
+    async def run_persona(persona, session, observation) -> None:
+        decisions = [
+            AgentDecision(kind=DecisionKind.ACTION, action=Action(id=f"act-{persona.id}", tool_name="observe_page")),
+            AgentDecision(kind=DecisionKind.FINISH, summary="done"),
+        ]
+        agent = PersonaAgent(model=ScriptedModel(decisions), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=3))
+        result = await agent.run(persona, session, observation)
+        assert result.status == "completed"
+
+    await asyncio.gather(*(run_persona(persona, session, observation) for persona, session, observation in zip(personas, sessions, observations)))
+    events = await state.list_events("shared-run", limit=20)
+    assert len(events) == 6
+    assert [event.sequence for event in events] == list(range(6))
+    assert len({event.sequence for event in events}) == len(events)

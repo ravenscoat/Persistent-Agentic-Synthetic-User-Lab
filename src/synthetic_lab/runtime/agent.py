@@ -66,7 +66,7 @@ class PersonaAgent:
         last_click = None
         current = session.model_copy(update={"status": SessionStatus.RUNNING})
         if steps == 0:
-            await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
+            await self.state.append_event(await self._new_event(current, "session_started", {"phase": current.phase}))
         while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
             bundle = await self.context.build(persona, current, observation, self.budgets)
             if feedback:
@@ -79,8 +79,8 @@ class PersonaAgent:
                 requests += 1
             except Exception as exc:
                 failed = current.model_copy(update={"status": SessionStatus.FAILED})
-                await self.state.append_event(self._event(current, "model_failed", {"error": type(exc).__name__}, steps + 1))
-                await self.state.checkpoint_step(current.id, self._event(current, "session_failed", {"reason": "model_unavailable"}, steps + 2), failed)
+                await self.state.append_event(await self._new_event(current, "model_failed", {"error": type(exc).__name__}))
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_failed", {"reason": "model_unavailable"}), failed)
                 return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
             decision: AgentDecision = response.decision
             if decision.kind.value == "finish":
@@ -91,15 +91,21 @@ class PersonaAgent:
                     feedback = f"Completion check failed. You are still at {observation.url}. Filling fields does not submit the form. If required fields are filled, choose the submit button. Return an action decision until the requested destination is visible."
                     continue
                 completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
-                await self.state.checkpoint_step(current.id, self._event(current, "session_finished", {"summary": decision.summary}, steps + 1), completed)
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", {"summary": decision.summary}), completed)
                 return AgentRunResult("completed", decision.summary or "finished", steps, requests, observation.id)
             if decision.kind.value == "blocked":
                 failed = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
-                await self.state.checkpoint_step(current.id, self._event(current, "session_blocked", {"summary": decision.summary}, steps + 1), failed)
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_blocked", {"summary": decision.summary}), failed)
                 return AgentRunResult("blocked", decision.summary or "blocked", steps, requests, observation.id)
             if decision.kind.value == "memory_query":
                 records = await self.memory.search(persona.run_id, persona.id, decision.query or "", 5)
-                await self._write_memory(persona, current, MemoryType.CONVERSATION, f"Memory query: {decision.query}; returned {len(records)} records", steps + 1)
+                query_event = await self._new_event(
+                    current,
+                    "memory_queried",
+                    {"query": decision.query or "", "result_count": len(records)},
+                )
+                await self.state.append_event(query_event)
+                await self._write_memory(persona, current, MemoryType.CONVERSATION, f"Memory query: {decision.query}; returned {len(records)} records", query_event.sequence)
                 steps += 1
                 current = current.model_copy(update={"step_count": steps})
                 continue
@@ -139,7 +145,7 @@ class PersonaAgent:
             last_click = click_signature if action.tool_name == "click" and result.status.value == "success" else None
             target_name = target_element.name if target_element else action.tool_name
             steps += 1
-            event = self._event(
+            event = await self._new_event(
                 current,
                 "tool_result",
                 {
@@ -156,12 +162,11 @@ class PersonaAgent:
                     "context_accounting_method": bundle.accounting_method,
                     "model_latency_ms": response.latency_ms,
                 },
-                steps,
             )
             next_status = SessionStatus.RUNNING if result.status.value == "success" else SessionStatus.WAITING
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)
-            await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Step {steps}: {action.tool_name} on {target_name!r}: {result.status.value}. Use the CURRENT observation for field state and targets.", steps)
+            await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Step {steps}: {action.tool_name} on {target_name!r}: {result.status.value}. Use the CURRENT observation for field state and targets.", event.sequence)
             if stop_after_steps is not None and steps >= stop_after_steps:
                 return AgentRunResult("interrupted", "simulated_crash", steps, requests, observation.id)
             if isinstance(result.data, dict) and result.data.get("id") and result.data.get("url"):
@@ -182,7 +187,7 @@ class PersonaAgent:
                 return AgentRunResult("blocked", result.error_code or "tool_failed", steps, requests, observation.id)
         reason = "step_budget_exhausted" if steps >= self.budgets.max_steps else "model_request_budget_exhausted"
         exhausted = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
-        await self.state.checkpoint_step(current.id, self._event(current, "budget_exhausted", {"reason": reason}, steps + 1), exhausted)
+        await self.state.checkpoint_step(current.id, await self._new_event(current, "budget_exhausted", {"reason": reason}), exhausted)
         return AgentRunResult("failed", reason, steps, requests, observation.id)
 
     @staticmethod
@@ -209,14 +214,14 @@ class PersonaAgent:
 
     async def _fail(self, session: SessionRecord, observation: Any, steps: int, requests: int, reason: str) -> AgentRunResult:
         failed = session.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
-        await self.state.checkpoint_step(session.id, self._event(session, "session_failed", {"reason": reason}, steps + 1), failed)
+        await self.state.checkpoint_step(session.id, await self._new_event(session, "session_failed", {"reason": reason}), failed)
         return AgentRunResult("failed", reason, steps, requests, observation.id)
 
     async def _write_memory(self, persona: PersonaRecord, session: SessionRecord, memory_type: MemoryType, text: str, sequence: int) -> None:
         now = datetime.now(timezone.utc)
         await self.memory.append(MemoryRecord(id=str(uuid.uuid4()), run_id=persona.run_id, persona_id=persona.id, type=memory_type, text=text, structured_data={}, source_event_ids=[f"{session.id}:{sequence}"], trust=Trust.OBSERVED, valid_from=now))
 
-    @staticmethod
-    def _event(session: SessionRecord, kind: str, payload: dict[str, Any], sequence: int) -> Event:
+    async def _new_event(self, session: SessionRecord, kind: str, payload: dict[str, Any]) -> Event:
+        sequence = await self.state.reserve_event_sequences(session.run_id)
         now = datetime.now(timezone.utc)
         return Event(id=str(uuid.uuid4()), run_id=session.run_id, persona_id=session.persona_id, session_id=session.id, sequence=sequence, kind=kind, wall_time=now, business_time=now, payload=payload)

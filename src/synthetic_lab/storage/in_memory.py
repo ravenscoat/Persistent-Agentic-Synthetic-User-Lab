@@ -27,6 +27,7 @@ class InMemoryStateRepository:
         self.runs: dict[str, RunRecord] = {}
         self.sessions: dict[str, SessionRecord] = {}
         self.events: dict[str, list[Event]] = {}
+        self._next_event_sequences: dict[str, int] = {}
         self.expectations: dict[str, Expectation] = {}
         self.findings: dict[str, Finding] = {}
         self._lock = asyncio.Lock()
@@ -37,6 +38,7 @@ class InMemoryStateRepository:
                 raise ValueError(f"run already exists: {run.id}")
             self.runs[run.id] = copy.deepcopy(run)
             self.events[run.id] = []
+            self._next_event_sequences[run.id] = 0
             return copy.deepcopy(run)
 
     async def get_run(self, run_id: str) -> RunRecord:
@@ -97,6 +99,17 @@ class InMemoryStateRepository:
             self.sessions[session_id] = copy.deepcopy(next_session)
             return copy.deepcopy(next_session)
 
+    async def reserve_event_sequences(self, run_id: str, count: int = 1) -> int:
+        """Atomically reserve a contiguous run-wide event sequence range."""
+        if count <= 0:
+            raise ValueError("count must be positive")
+        async with self._lock:
+            if run_id not in self.runs:
+                raise KeyError(f"unknown run: {run_id}")
+            next_sequence = self._next_event_sequences.get(run_id, 0)
+            self._next_event_sequences[run_id] = next_sequence + count
+            return next_sequence
+
     async def append_event(self, event: Event) -> Event:
         async with self._lock:
             self._append_event_locked(event)
@@ -110,6 +123,9 @@ class InMemoryStateRepository:
             raise ValueError(f"duplicate event sequence: {event.sequence}")
         events.append(copy.deepcopy(event))
         events.sort(key=lambda item: item.sequence)
+        self._next_event_sequences[event.run_id] = max(
+            self._next_event_sequences.get(event.run_id, 0), event.sequence + 1
+        )
 
     async def list_events(self, run_id: str, after_sequence: int = -1, limit: int = 100) -> list[Event]:
         if limit <= 0:

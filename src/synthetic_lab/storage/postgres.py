@@ -128,6 +128,39 @@ class PostgresStateRepository:
         await asyncio.to_thread(checkpoint)
         return next_session
 
+    async def reserve_event_sequences(self, run_id: str, count: int = 1) -> int:
+        """Reserve sequence values under the run row lock.
+
+        A reservation may leave a gap if a worker crashes before writing an
+        event. Gaps are intentional: uniqueness and safe concurrent writers
+        matter more than dense numbering.
+        """
+        if count <= 0:
+            raise ValueError("count must be positive")
+
+        def reserve() -> int:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """UPDATE sul_runs
+                           SET next_event_sequence = next_event_sequence + %s
+                           WHERE id = %s
+                           RETURNING next_event_sequence - %s""",
+                        (count, run_id, count),
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise KeyError(f"unknown run: {run_id}")
+                connection.commit()
+            return int(row[0])
+
+        try:
+            return await asyncio.to_thread(reserve)
+        except KeyError:
+            raise
+        except Exception as exc:
+            raise PostgresRepositoryError("could not reserve event sequence") from exc
+
     async def append_event(self, event: Event) -> Event:
         def append() -> None:
             with self._connection_factory() as connection:

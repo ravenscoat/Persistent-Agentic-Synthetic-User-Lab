@@ -6,8 +6,12 @@ CREATE TABLE IF NOT EXISTS sul_runs (
   created_at TIMESTAMPTZ NOT NULL,
   business_time TIMESTAMPTZ NOT NULL,
   config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-  model_metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+  model_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  next_event_sequence BIGINT NOT NULL DEFAULT 0
 );
+
+-- Safe for databases created by an older version of this migration.
+ALTER TABLE sul_runs ADD COLUMN IF NOT EXISTS next_event_sequence BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS sul_memory (
   id TEXT PRIMARY KEY,
@@ -60,6 +64,13 @@ CREATE TABLE IF NOT EXISTS sul_events (
 
 CREATE INDEX IF NOT EXISTS sul_events_run_sequence_ix
   ON sul_events (run_id, sequence_no);
+
+-- Existing event history must advance the allocator before new workers run.
+UPDATE sul_runs AS run
+SET next_event_sequence = GREATEST(
+  run.next_event_sequence,
+  COALESCE((SELECT MAX(event.sequence_no) + 1 FROM sul_events AS event WHERE event.run_id = run.id), 0)
+);
 
 CREATE TABLE IF NOT EXISTS sul_expectations (
   id TEXT PRIMARY KEY,
