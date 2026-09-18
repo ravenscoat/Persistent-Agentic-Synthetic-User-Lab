@@ -16,5 +16,12 @@ Healthy behavior returns HTTP 403 for the former owner and HTTP 200 for the
 new owner. With `owner_transfer_leak`, both return HTTP 200 and the independent
 verifier confirms the leak from authoritative membership state.
 
-This is a two-client application-session proof. The next extension is to drive
-the two sessions through Playwright and the Qwen action loop.
+The same browser-session proof can be run with the seeded leak:
+
+```powershell
+.venv\Scripts\python.exe scripts\check_two_persona_browser.py --fault owner_transfer_leak
+```
+
+The Playwright proof saves one browser state per persona and verifies both
+protected-endpoint responses. It uses deterministic form actions; the next
+extension is running these two browser sessions through the Qwen action loop.

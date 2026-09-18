@@ -47,7 +47,9 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
             business.create_account(account_id, email, password)
         response = RedirectResponse("/dashboard", status_code=303)
         response.set_cookie("account_id", account_id, httponly=True)
-        response.set_cookie("member_id", "new-owner", httponly=True)
+        # The person who signs up is the initial owner. A later transfer can
+        # promote the separately provisioned new-owner identity.
+        response.set_cookie("member_id", "old-owner", httponly=True)
         return response
 
     def account_id(request: Request) -> str:
