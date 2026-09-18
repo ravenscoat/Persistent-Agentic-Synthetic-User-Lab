@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from synthetic_lab.api import create_app
+from synthetic_lab.storage import InMemoryStateRepository
 
 
 def test_run_lifecycle_and_event_cursor() -> None:
