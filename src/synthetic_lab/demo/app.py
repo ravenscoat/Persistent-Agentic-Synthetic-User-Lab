@@ -110,6 +110,44 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         body = "".join(f"<li>{item['message']}</li>" for item in values) or "<li>No notifications</li>"
         return HTMLResponse(_page("Notifications", f"<ul>{body}</ul><a href='/dashboard'>Back</a>"))
 
+    @app.get("/tasks", response_class=HTMLResponse)
+    async def tasks(request: Request) -> HTMLResponse:
+        account_id(request)
+        body = '''<form method="post" action="/tasks"><input name="project_id" value="project-1"><input name="title" placeholder="Task title" required><button>Create task</button></form>
+        <form method="post" action="/tasks/task-1/complete"><button>Complete task-1</button></form><a href="/dashboard">Back</a>'''
+        return HTMLResponse(_page("Tasks", body))
+
+    @app.post("/tasks")
+    async def create_task(request: Request, project_id: str = Form(...), title: str = Form(...)) -> RedirectResponse:
+        account_id(request)
+        business.create_task(project_id, f"task-{uuid4().hex[:8]}", title)
+        return RedirectResponse("/tasks", status_code=303)
+
+    @app.post("/tasks/{task_id}/complete")
+    async def complete_task(request: Request, task_id: str) -> RedirectResponse:
+        account_id(request)
+        business.complete_task(task_id)
+        return RedirectResponse("/tasks", status_code=303)
+
+    @app.get("/billing", response_class=HTMLResponse)
+    async def billing(request: Request) -> HTMLResponse:
+        current_id = account_id(request)
+        return HTMLResponse(_page("Billing", f'''<form method="post" action="/billing/subscribe"><button>Start subscription</button></form>
+        <form method="post" action="/billing/cancel"><input name="subscription_id" value="subscription-1"><button>Cancel subscription</button></form>
+        <form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button>Charge account</button></form>
+        <p>Account: {current_id}</p><a href="/dashboard">Back</a>'''))
+
+    @app.post("/billing/subscribe")
+    async def subscribe(request: Request) -> RedirectResponse:
+        business.subscribe(account_id(request), "subscription-1")
+        return RedirectResponse("/billing", status_code=303)
+
+    @app.post("/billing/cancel")
+    async def cancel_billing(request: Request, subscription_id: str = Form(...)) -> RedirectResponse:
+        account_id(request)
+        business.cancel_subscription(subscription_id)
+        return RedirectResponse("/billing", status_code=303)
+
     @app.get("/api/owner-only")
     async def owner_only(request: Request) -> dict[str, str]:
         current_id = account_id(request)
