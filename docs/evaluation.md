@@ -16,6 +16,25 @@ This is a small regression harness, not a production benchmark. It gives the
 project a repeatable proof that the seeded examples are observable and that
 the verification layer does not report a bug on healthy state.
 
+## Matched memory ablation
+
+Run the two-visit trial-return comparison with:
+
+```powershell
+python scripts/evaluate_memory.py --trials 3
+```
+
+Each arm receives the same account, business clock, healthy/fault cases, and
+independent verifier. The memory-on arm receives a verified expectation written
+on the first visit; the memory-off arm does not. A deterministic policy isolates
+context retrieval from local-model randomness. The report measures whether the
+return visit received the expected memory, whether it raised a correct suspicion
+for the early-expiry fault, healthy false positives, context size, and latency.
+
+This proves that memory changes the information available on a later visit. It
+is not a Qwen quality benchmark. Verifier confirmation remains separate because
+the verifier is independent of agent memory in both arms.
+
 ## Local Qwen performance note
 
 On the development machine (RTX 5060 Laptop GPU, 8 GB VRAM), a short Qwen3-8B
