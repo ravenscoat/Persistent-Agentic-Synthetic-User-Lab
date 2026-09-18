@@ -117,6 +117,12 @@ class DemoStore:
         self.connection.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
         self.connection.commit()
 
+    def task_status(self, task_id: str) -> str:
+        row = self.connection.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise KeyError(task_id)
+        return str(row["status"])
+
     def invite(self, account_id: str, invitation_id: str, email: str) -> None:
         self.connection.execute("INSERT INTO invitations(id,account_id,email,status,created_at) VALUES (?,?,?,?,?)", (invitation_id, account_id, email, "pending", self.business_time.isoformat()))
         self.connection.commit()

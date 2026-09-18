@@ -131,6 +131,15 @@ class PostgresDemoStore:
                 cursor.execute("UPDATE sul_demo_tasks SET status=%s WHERE id=%s", (status, task_id))
             connection.commit()
 
+    def task_status(self, task_id: str) -> str:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT status FROM sul_demo_tasks WHERE id=%s", (task_id,))
+                row = cursor.fetchone()
+        if row is None:
+            raise KeyError(task_id)
+        return str(row[0])
+
     def invite(self, account_id: str, invitation_id: str, email: str) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
