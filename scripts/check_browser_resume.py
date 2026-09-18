@@ -21,6 +21,7 @@ from synthetic_lab.contracts import Action, AgentDecision, BudgetConfig, Decisio
 from synthetic_lab.demo.app import create_demo_app
 from synthetic_lab.demo.postgres_store import PostgresDemoStore
 from synthetic_lab.llm import build_local_model
+from synthetic_lab.memory import with_optional_qdrant
 from synthetic_lab.runtime.agent import PersonaAgent
 from synthetic_lab.runtime.workflow import WorkflowContext, milestones
 from synthetic_lab.storage import PostgresMemoryRepository, PostgresStateRepository
@@ -105,12 +106,14 @@ async def main(real_model: bool = False) -> int:
         raise RuntimeError("SUL_POSTGRES_DSN is required: recovery must use durable PostgreSQL state")
     started = time.monotonic()
     root = Path(__file__).resolve().parents[1]
+    settings = Settings()
     # Reuse the guarded evaluation-schema convention accepted by the store.
     schema = f"sul_eval_{uuid4().hex}"
     store = PostgresDemoStore(dsn, schema=schema)
     await store.apply_migration(str(root / "migrations" / "003_demo_business_postgres.sql"))
     state = PostgresStateRepository.from_dsn(dsn, schema=schema)
     memory = PostgresMemoryRepository.from_dsn(dsn, schema=schema)
+    memory = with_optional_qdrant(memory, settings)
     await state.apply_migration(root / "migrations" / "002_initial_postgres.sql")
     server = uvicorn.Server(uvicorn.Config(create_demo_app(store), host="127.0.0.1", port=8012, log_level="error"))
     server_task = asyncio.create_task(server.serve())
@@ -128,7 +131,7 @@ async def main(real_model: bool = False) -> int:
         await first_browser.start()
         await first_browser.page.goto("http://127.0.0.1:8012/")
         observation = await first_browser.observe()
-        model = build_local_model(Settings()) if real_model else RecoveryWorkflowModel()
+        model = build_local_model(settings) if real_model else RecoveryWorkflowModel()
         first_tools = BrowserToolRegistry({persona.id: first_browser})
         first_agent = PersonaAgent(model=model, context=WorkflowContext(memory, store=store, tool_registry=first_tools), tools=first_tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=30, max_model_requests=40), completion_check=lambda: complete(store))
         interrupted = await first_agent.run(persona, leased, observation, stop_after_steps=6)
@@ -141,6 +144,7 @@ async def main(real_model: bool = False) -> int:
         # A fresh worker has no Python object from the first one.
         state = PostgresStateRepository.from_dsn(dsn, schema=schema)
         memory = PostgresMemoryRepository.from_dsn(dsn, schema=schema)
+        memory = with_optional_qdrant(memory, settings)
         resume_url = last_observed_url(await state.list_events(run_id, limit=1000))
         reclaimed = await state.lease_ready_session("worker-after-crash", now + timedelta(seconds=2), lease_seconds=30)
         if reclaimed is None or reclaimed.id != session_id or reclaimed.step_count != interrupted.steps:
@@ -150,7 +154,7 @@ async def main(real_model: bool = False) -> int:
         await resumed_browser.page.goto(resume_url)
         resumed_observation = await resumed_browser.observe()
         resumed_tools = BrowserToolRegistry({persona.id: resumed_browser})
-        resumed_model = build_local_model(Settings()) if real_model else RecoveryWorkflowModel()
+        resumed_model = build_local_model(settings) if real_model else RecoveryWorkflowModel()
         resumed_agent = PersonaAgent(model=resumed_model, context=WorkflowContext(memory, store=store, tool_registry=resumed_tools), tools=resumed_tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=30, max_model_requests=40), completion_check=lambda: complete(store))
         result = await resumed_agent.run(persona, reclaimed, resumed_observation)
         events = await state.list_events(run_id, limit=1000)

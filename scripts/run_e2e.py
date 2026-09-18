@@ -21,6 +21,7 @@ from synthetic_lab.demo.store import DemoStore
 from synthetic_lab.demo.postgres_store import PostgresDemoStore
 from synthetic_lab.browser.tools import BrowserToolRegistry, PlaywrightBrowserSession
 from synthetic_lab.memory.context import MemoryContextAssembler
+from synthetic_lab.memory import with_optional_qdrant
 from synthetic_lab.memory.embeddings import OllamaEmbeddingClient
 from synthetic_lab.llm import build_local_model
 from synthetic_lab.reporting.reports import ReportBuilder
@@ -146,6 +147,7 @@ class WorkflowModel(SmokeModel):
 
 async def main(real_model: bool = False, workflow: bool = False) -> int:
     started = time.monotonic()
+    settings = Settings()
     dsn = os.getenv("SUL_POSTGRES_DSN")
     schema = f"sul_eval_{uuid4().hex}" if dsn else None
     fault = os.getenv("SUL_BUSINESS_FAULT") or (None if workflow else "trial_expires_day_5")
@@ -155,6 +157,7 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
     if dsn:
         state = PostgresStateRepository.from_dsn(dsn, schema=schema)
         memory = PostgresMemoryRepository.from_dsn(dsn, schema=schema)
+        memory = with_optional_qdrant(memory, settings)
         await state.apply_migration(str(Path(__file__).resolve().parents[1] / 'migrations' / '002_initial_postgres.sql'))
     else:
         state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
@@ -174,7 +177,7 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
         await browser.page.goto("http://127.0.0.1:8011/")
         observation = await browser.observe()
         tools = BrowserToolRegistry({persona.id: browser})
-        model = build_local_model(Settings()) if real_model else (WorkflowModel() if workflow else SmokeModel())
+        model = build_local_model(settings) if real_model else (WorkflowModel() if workflow else SmokeModel())
         async def signup_complete():
             return store.account_exists() and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
         goal = ("Follow this exact sequence once: create an account; from the dashboard open Projects; create one project; continue to Tasks; create one task; complete task-1; open Billing; start one subscription; charge the account once; return to Billing; cancel subscription-1; then finish. Do not repeat a successful action and do not start another workflow.") if workflow else persona.goal

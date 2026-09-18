@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = Field(default=45.0, gt=0)
     browser_origin: str = "http://127.0.0.1:8001"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    qdrant_url: str | None = None
+    qdrant_collection: str = "sul_memory"
     postgres_dsn: str | None = None
     business_fault: str | None = None
 
