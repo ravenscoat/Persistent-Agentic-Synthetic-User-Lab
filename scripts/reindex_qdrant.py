@@ -15,7 +15,7 @@ async def main(run_id: str, limit: int) -> int:
         raise RuntimeError("SUL_POSTGRES_DSN and SUL_QDRANT_URL are required")
     primary = PostgresMemoryRepository.from_dsn(settings.postgres_dsn)
     embedder = OllamaEmbeddingClient(settings.model_base_url, settings.embedding_model)
-    index = QdrantSemanticIndex.from_url(settings.qdrant_url, embedder, collection=settings.qdrant_collection, embedding_model=settings.embedding_model)
+    index = QdrantSemanticIndex.from_url(settings.qdrant_url, embedder, collection=settings.qdrant_collection, embedding_model=settings.embedding_model, api_key=settings.qdrant_api_key)
     try:
         result = await reindex_run(primary, index, run_id, limit=limit)
         print(f"indexed={result.indexed} failed={result.failed} truncated={result.truncated}")

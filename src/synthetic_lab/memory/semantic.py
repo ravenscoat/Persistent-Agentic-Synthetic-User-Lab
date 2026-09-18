@@ -43,12 +43,12 @@ class QdrantSemanticIndex:
         self._dimension: int | None = None
 
     @classmethod
-    def from_url(cls, url: str, embedder: Any, *, collection: str = "sul_memory", embedding_model: str = "local") -> "QdrantSemanticIndex":
+    def from_url(cls, url: str, embedder: Any, *, collection: str = "sul_memory", embedding_model: str = "local", api_key: str | None = None) -> "QdrantSemanticIndex":
         try:
             from qdrant_client import AsyncQdrantClient
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise SemanticIndexUnavailable("install synthetic-user-lab[qdrant] first") from exc
-        return cls(AsyncQdrantClient(url=url), embedder, collection=collection, embedding_model=embedding_model)
+        return cls(AsyncQdrantClient(url=url, api_key=api_key), embedder, collection=collection, embedding_model=embedding_model)
 
     async def upsert(self, record: MemoryRecord) -> None:
         vector = (await self.embedder.embed(record.text))[0]
@@ -98,7 +98,7 @@ class QdrantSemanticIndex:
                 raise SemanticIndexUnavailable("embedding dimension changed for the configured Qdrant collection")
             return
         try:
-            from qdrant_client.models import Distance, VectorParams
+            from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
             exists = await self.client.collection_exists(self.collection)
             if not exists:
                 await self.client.create_collection(collection_name=self.collection, vectors_config=VectorParams(size=dimension, distance=Distance.COSINE))
@@ -107,6 +107,15 @@ class QdrantSemanticIndex:
             actual = vectors.size if hasattr(vectors, "size") else None
             if actual != dimension:
                 raise SemanticIndexUnavailable(f"Qdrant collection dimension is {actual}, expected {dimension}")
+            # Qdrant Cloud requires an indexed payload field for filtered
+            # searches. Local embedded Qdrant accepts the same setup, so this
+            # keeps development and production behavior aligned.
+            for field_name in ("run_id", "persona_id"):
+                await self.client.create_payload_index(
+                    collection_name=self.collection,
+                    field_name=field_name,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
             self._dimension = dimension
         except SemanticIndexUnavailable:
             raise
@@ -174,6 +183,7 @@ def with_optional_qdrant(primary: Any, settings: Any) -> Any:
         embedder,
         collection=settings.qdrant_collection,
         embedding_model=settings.embedding_model,
+        api_key=getattr(settings, "qdrant_api_key", None),
     )
     return HybridMemoryRepository(primary, index)
 

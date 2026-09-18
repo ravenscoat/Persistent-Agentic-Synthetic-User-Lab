@@ -17,7 +17,8 @@ docker compose -f docker-compose.postgres.yml up -d
 .venv\Scripts\python.exe -m pip install -e ".[qdrant]"
 ```
 
-Configure `SUL_QDRANT_URL=http://localhost:6333`. The application should wrap
+Configure `SUL_QDRANT_URL=http://localhost:6333` and, for Qdrant Cloud,
+`SUL_QDRANT_API_KEY` through the environment. The application should wrap
 its PostgreSQL memory repository with `HybridMemoryRepository` and a
 `QdrantSemanticIndex` using the configured embedding client. The collection is
 created only after the first embedding and rejects an embedding-dimension change
@@ -36,3 +37,14 @@ the embedding model are available:
 Only active memory is indexed. The command reports `truncated=true` when the
 chosen limit would leave records behind, so an operator cannot mistake a partial
 backfill for a complete one.
+
+Validate a live Cloud or server deployment with:
+
+```powershell
+.venv\Scripts\python.exe scripts\check_qdrant_live.py
+```
+
+This creates a temporary collection, verifies same-run retrieval, verifies
+cross-run filtering, and verifies deletion. Collection initialization creates
+keyword payload indexes for `run_id` and `persona_id`, which Qdrant Cloud
+requires for filtered search.
