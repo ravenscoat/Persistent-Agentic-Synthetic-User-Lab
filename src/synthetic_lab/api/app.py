@@ -34,7 +34,8 @@ def create_app(state: InMemoryStateRepository | None = None) -> FastAPI:
         rows = "".join(
             f'<tr><td>{run.id}</td><td>{run.scenario_id}</td><td>{run.status.value}</td>'
             f'<td><a href="/api/runs/{run.id}/events">events</a> · '
-            f'<a href="/api/runs/{run.id}/findings">findings</a></td></tr>'
+            f'<a href="/api/runs/{run.id}/findings">findings</a> · '
+            f'<a href="/api/runs/{run.id}/summary">summary</a></td></tr>'
             for run in runs
         ) or '<tr><td colspan="4">No runs yet</td></tr>'
         finding_count = len(repository.findings)

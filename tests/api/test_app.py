@@ -31,6 +31,7 @@ def test_dashboard_lists_created_runs() -> None:
     assert dashboard.status_code == 200
     assert run_id in dashboard.text
     assert "payment_retry" in dashboard.text
+    assert f"/api/runs/{run_id}/summary" in dashboard.text
 
 
 def test_run_summary_aggregates_persona_actions_and_memory_ids() -> None:
