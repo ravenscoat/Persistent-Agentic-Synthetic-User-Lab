@@ -43,7 +43,7 @@ class PostgresDemoStore:
     def create_account(self, account_id: str, email: str, password: str) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("INSERT INTO sul_demo_accounts(id,email,password,trial_start) VALUES (%s,%s,%s,%s)", (account_id, email, password, self.business_time))
+                cursor.execute("INSERT INTO sul_demo_accounts(id,email,password,trial_start) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", (account_id, email, password, self.business_time))
             connection.commit()
 
     def account(self, account_id: str) -> dict[str, Any]:

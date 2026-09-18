@@ -48,7 +48,7 @@ class DemoStore:
         return self.business_time
 
     def create_account(self, account_id: str, email: str, password: str) -> None:
-        self.connection.execute("INSERT INTO accounts(id,email,password,trial_start) VALUES (?,?,?,?)", (account_id, email, password, self.business_time.isoformat()))
+        self.connection.execute("INSERT OR IGNORE INTO accounts(id,email,password,trial_start) VALUES (?,?,?,?)", (account_id, email, password, self.business_time.isoformat()))
         self.connection.commit()
 
     def account(self, account_id: str) -> dict[str, Any]:

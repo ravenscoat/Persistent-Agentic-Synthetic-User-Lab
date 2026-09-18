@@ -48,6 +48,7 @@ class PersonaAgent:
         feedback = ""
         corrections = 0
         last_fill = None
+        last_click = None
         current = session.model_copy(update={"status": SessionStatus.RUNNING})
         await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
         while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
@@ -93,7 +94,23 @@ class PersonaAgent:
                 action = self._resolve_model_target(action, observation)
             except ValueError:
                 return await self._fail(current, observation, steps, requests, "invalid_action_target")
+            target_element = next((element for element in observation.elements if element.id == action.arguments.get("element_id")), None)
+            if action.tool_name == "click" and target_element and target_element.role == "button":
+                missing = [element.name for element in observation.elements if element.required and element.filled is False]
+                if missing and "account" in target_element.name.casefold():
+                    corrections += 1
+                    if corrections > 4:
+                        return await self._fail(current, observation, steps, requests, "progress_repair_exhausted")
+                    feedback = f"Do not submit yet. Required fields still empty: {missing}. Fill those fields before clicking {target_element.name}."
+                    continue
             signature = (observation.url, action.arguments.get("element_id"), action.arguments.get("value"))
+            click_signature = (observation.url, action.arguments.get("element_id"))
+            if action.tool_name == "click" and click_signature == last_click:
+                corrections += 1
+                if corrections > 4:
+                    return await self._fail(current, observation, steps, requests, "progress_repair_exhausted")
+                feedback = "That exact click already succeeded on this page. Choose the next incomplete step or navigate to the next page; do not repeat it."
+                continue
             if action.tool_name == "fill" and signature == last_fill:
                 corrections += 1
                 if corrections > 2:
@@ -103,7 +120,7 @@ class PersonaAgent:
             feedback = ""
             result: ToolResult = await self.tools.dispatch(persona, action)
             last_fill = signature if action.tool_name == "fill" and result.status.value == "success" else None
-            target_element = next((element for element in observation.elements if element.id == action.arguments.get("element_id")), None)
+            last_click = click_signature if action.tool_name == "click" and result.status.value == "success" else None
             target_name = target_element.name if target_element else action.tool_name
             steps += 1
             event = self._event(current, "tool_result", {"tool_name": action.tool_name, "target_name": target_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)

@@ -164,7 +164,7 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
         model = build_local_model(Settings()) if real_model else (WorkflowModel() if workflow else SmokeModel())
         async def signup_complete():
             return store.account_exists() and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
-        goal = "Create an account, create a project, create and complete a task, then open billing, start a subscription, charge the account, cancel the subscription, and finish." if workflow else persona.goal
+        goal = ("Follow this exact sequence once: create an account; from the dashboard open Projects; create one project; continue to Tasks; create one task; complete task-1; open Billing; start one subscription; charge the account once; return to Billing; cancel subscription-1; then finish. Do not repeat a successful action and do not start another workflow.") if workflow else persona.goal
         persona = persona.model_copy(update={"goal": goal})
         async def workflow_complete():
             task_ok = False
