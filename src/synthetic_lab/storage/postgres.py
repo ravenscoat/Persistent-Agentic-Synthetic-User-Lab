@@ -151,7 +151,7 @@ class PostgresStateRepository:
         return expectation
 
     async def save_finding(self, finding: Finding) -> Finding:
-        await self._write("INSERT INTO sul_findings(id,run_id,session_id,invariant_id,status,expected,actual,evidence_ids,verifier_version,replay_status) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status", (finding.id, finding.run_id, finding.session_id, finding.invariant_id, finding.status.value, json.dumps(finding.expected), json.dumps(finding.actual), json.dumps(finding.evidence_ids), finding.verifier_version, finding.replay_status.value))
+        await self._write("INSERT INTO sul_findings(id,run_id,session_id,invariant_id,status,expected,actual,evidence_ids,verifier_version,replay_status) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status, expected=EXCLUDED.expected, actual=EXCLUDED.actual, evidence_ids=EXCLUDED.evidence_ids, verifier_version=EXCLUDED.verifier_version, replay_status=EXCLUDED.replay_status", (finding.id, finding.run_id, finding.session_id, finding.invariant_id, finding.status.value, json.dumps(finding.expected), json.dumps(finding.actual), json.dumps(finding.evidence_ids), finding.verifier_version, finding.replay_status.value))
         return finding
 
     async def _read(self, query: str, params: tuple[Any, ...]) -> list[Any]:

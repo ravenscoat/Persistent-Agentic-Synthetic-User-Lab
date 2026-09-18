@@ -18,3 +18,10 @@ async def test_replay_does_not_confirm_healthy_state() -> None:
     finding = Finding(id="f1", run_id="r1", session_id="s1", invariant_id="purchase_idempotency", status=FindingStatus.CONFIRMED, expected=1, actual=2, verifier_version="demo")
     result = await DemoReplayService().replay(finding, fault=None)
     assert result.status.value == "not_reproduced"
+
+
+@pytest.mark.asyncio
+async def test_replay_reproduces_seeded_task_completion_fault() -> None:
+    finding = Finding(id="f1", run_id="r1", session_id="s1", invariant_id="task_completion", status=FindingStatus.CONFIRMED, expected="completed", actual="pending", verifier_version="workflow")
+    result = await DemoReplayService().replay(finding, fault="task_completion_stale")
+    assert result.status.value == "reproduced"

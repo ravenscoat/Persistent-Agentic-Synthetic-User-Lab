@@ -30,6 +30,7 @@ from synthetic_lab.runtime.workflow import WorkflowContext, milestones, findings
 from synthetic_lab.storage import PostgresMemoryRepository, PostgresStateRepository
 from synthetic_lab.storage.in_memory import InMemoryMemoryRepository, InMemoryStateRepository
 from synthetic_lab.verification.invariants import DemoVerificationContext, DemoVerifier
+from synthetic_lab.verification import DemoReplayService
 
 
 class SmokeModel:
@@ -214,6 +215,8 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
                     expected=item["expected"], actual=item["actual"], evidence_ids=evidence_ids,
                     verifier_version="workflow-state-check-v1", replay_status=ReplayStatus.NOT_ATTEMPTED,
                 )
+                replay = await DemoReplayService().replay(finding, fault=fault)
+                finding = finding.model_copy(update={"replay_status": replay.status})
                 await state.save_finding(finding)
                 report = ReportBuilder().build(
                     finding, events, [],
@@ -221,7 +224,7 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
                 )
                 report_path = Path("artifacts") / f"finding-{finding.id}.json"
                 report_path.write_text(json.dumps(report.as_dict(), indent=2, default=str), encoding="utf-8")
-                finding_reports.append({"finding_id": finding.id, "report_path": str(report_path), "evidence_event_ids": evidence_ids})
+                finding_reports.append({"finding_id": finding.id, "report_path": str(report_path), "evidence_event_ids": evidence_ids, "replay_status": replay.status.value, "replay_reason": replay.reason})
         payload.update(duration_seconds=round(time.monotonic()-started, 2), findings=workflow_findings, finding_reports=finding_reports)
         Path(f"artifacts/e2e-{run_id}.json").write_text(json.dumps(payload, indent=2, default=str), encoding='utf-8')
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
