@@ -42,15 +42,31 @@ class PersonaAgent:
         self.clock = clock
         self.completion_check = completion_check
 
-    async def run(self, persona: PersonaRecord, session: SessionRecord, observation: Any) -> AgentRunResult:
-        steps = 0
+    async def run(
+        self,
+        persona: PersonaRecord,
+        session: SessionRecord,
+        observation: Any,
+        *,
+        stop_after_steps: int | None = None,
+    ) -> AgentRunResult:
+        """Run or resume a session from its last durable checkpoint.
+
+        ``stop_after_steps`` is a test-only crash boundary. It exits only after
+        the action checkpoint and memory write succeed, while leaving the
+        durable session RUNNING so a different worker can reclaim it.
+        """
+        if stop_after_steps is not None and stop_after_steps <= session.step_count:
+            raise ValueError("stop_after_steps must be greater than the persisted step count")
+        steps = session.step_count
         requests = 0
         feedback = ""
         corrections = 0
         last_fill = None
         last_click = None
         current = session.model_copy(update={"status": SessionStatus.RUNNING})
-        await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
+        if steps == 0:
+            await self.state.append_event(self._event(current, "session_started", {"phase": current.phase}, 0))
         while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
             bundle = await self.context.build(persona, current, observation, self.budgets)
             if feedback:
@@ -128,6 +144,8 @@ class PersonaAgent:
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)
             await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Step {steps}: {action.tool_name} on {target_name!r}: {result.status.value}. Use the CURRENT observation for field state and targets.", steps)
+            if stop_after_steps is not None and steps >= stop_after_steps:
+                return AgentRunResult("interrupted", "simulated_crash", steps, requests, observation.id)
             if isinstance(result.data, dict) and result.data.get("id") and result.data.get("url"):
                 try:
                     from synthetic_lab.contracts import Observation

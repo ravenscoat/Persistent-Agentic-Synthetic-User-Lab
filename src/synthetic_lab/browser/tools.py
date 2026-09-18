@@ -28,7 +28,14 @@ def _error(action_id: str, code: str, message: str) -> ToolResult:
 class PlaywrightBrowserSession:
     """A browser context owned by one persona. Browser binaries are loaded lazily."""
 
-    def __init__(self, run_id: str, session_id: str, origin: str, artifact_root: str | Path = "artifacts") -> None:
+    def __init__(
+        self,
+        run_id: str,
+        session_id: str,
+        origin: str,
+        artifact_root: str | Path = "artifacts",
+        storage_state_path: str | Path | None = None,
+    ) -> None:
         self.run_id = run_id
         self.session_id = session_id
         parsed = urlparse(origin)
@@ -36,6 +43,7 @@ class PlaywrightBrowserSession:
             raise ValueError("origin must be an absolute HTTP(S) URL")
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         self.artifact_root = Path(artifact_root)
+        self.storage_state_path = Path(storage_state_path) if storage_state_path else None
         self._playwright = None
         self._browser = None
         self._context = None
@@ -47,7 +55,12 @@ class PlaywrightBrowserSession:
 
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=True)
-        self._context = await self._browser.new_context()
+        context_options: dict[str, str] = {}
+        if self.storage_state_path is not None:
+            if not self.storage_state_path.is_file():
+                raise FileNotFoundError(f"saved browser state does not exist: {self.storage_state_path}")
+            context_options["storage_state"] = str(self.storage_state_path)
+        self._context = await self._browser.new_context(**context_options)
         self.page = await self._context.new_page()
 
     async def close(self) -> None:

@@ -69,6 +69,12 @@ class InMemoryStateRepository:
             self.sessions[session.id] = copy.deepcopy(session)
             return copy.deepcopy(session)
 
+    async def get_session(self, session_id: str) -> SessionRecord:
+        async with self._lock:
+            if session_id not in self.sessions:
+                raise KeyError(f"unknown session: {session_id}")
+            return copy.deepcopy(self.sessions[session_id])
+
     async def lease_ready_session(self, owner: str, now: datetime, lease_seconds: int) -> SessionRecord | None:
         async with self._lock:
             candidates = sorted(self.sessions.values(), key=lambda s: (s.due_business_time, s.id))

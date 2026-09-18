@@ -77,3 +77,26 @@ async def test_agent_stops_at_step_budget() -> None:
     agent = PersonaAgent(model=ScriptedModel([action, action]), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=1))
     result = await agent.run(persona, session, observation)
     assert result.reason == "step_budget_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_agent_resumes_from_durable_step_without_duplicate_start_event() -> None:
+    now = datetime.now(timezone.utc)
+    state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
+    await state.create_run(RunRecord(id="resume-run", scenario_id="trial_return", created_at=now, business_time=now))
+    initial = SessionRecord(id="resume-session", run_id="resume-run", persona_id="p", phase="start", due_business_time=now)
+    await state.enqueue_session(initial)
+    persona = PersonaRecord(id="p", run_id="resume-run", kind="new_customer", goal="test", application_account_id="a", allowed_tool_names=["observe_page"])
+    observation = Observation(id="o", run_id="resume-run", session_id="resume-session", url="http://demo/", captured_at=now)
+    action = AgentDecision(kind=DecisionKind.ACTION, action=Action(id="first", tool_name="observe_page"))
+    first = PersonaAgent(model=ScriptedModel([action]), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=4))
+    interrupted = await first.run(persona, initial, observation, stop_after_steps=1)
+    assert interrupted.status == "interrupted"
+    persisted = await state.get_session("resume-session")
+    assert persisted.step_count == 1
+    resumed = PersonaAgent(model=ScriptedModel([AgentDecision(kind=DecisionKind.FINISH, summary="done")]), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=4))
+    result = await resumed.run(persona, persisted, observation)
+    assert result.status == "completed"
+    events = await state.list_events("resume-run", limit=20)
+    assert [event.sequence for event in events] == [0, 1, 2]
+    assert [event.kind for event in events].count("session_started") == 1
