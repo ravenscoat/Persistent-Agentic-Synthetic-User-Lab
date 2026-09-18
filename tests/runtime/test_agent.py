@@ -61,6 +61,10 @@ async def test_agent_checkpoints_tool_and_finish() -> None:
     assert (await state.get_run("r1")).status.value == "CREATED"
     assert (await state.list_events("r1"))
     assert state.sessions["s1"].status is SessionStatus.COMPLETED
+    tool_event = next(event for event in await state.list_events("r1") if event.kind == "tool_result")
+    assert tool_event.payload["retrieved_memory_ids"] == []
+    assert tool_event.payload["context_tokens"] > 0
+    assert tool_event.payload["model_latency_ms"] == 1
 
 
 @pytest.mark.asyncio

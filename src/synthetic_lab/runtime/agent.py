@@ -139,7 +139,25 @@ class PersonaAgent:
             last_click = click_signature if action.tool_name == "click" and result.status.value == "success" else None
             target_name = target_element.name if target_element else action.tool_name
             steps += 1
-            event = self._event(current, "tool_result", {"tool_name": action.tool_name, "target_name": target_name, "action_id": action.id, "status": result.status.value, "data": result.data, "error_code": result.error_code}, steps)
+            event = self._event(
+                current,
+                "tool_result",
+                {
+                    "tool_name": action.tool_name,
+                    "target_name": target_name,
+                    "action_id": action.id,
+                    "status": result.status.value,
+                    "data": result.data,
+                    "error_code": result.error_code,
+                    # IDs, not memory text: enough for evidence/retrieval
+                    # audits without duplicating potentially sensitive context.
+                    "retrieved_memory_ids": bundle.included_memory_ids,
+                    "context_tokens": bundle.estimated_tokens,
+                    "context_accounting_method": bundle.accounting_method,
+                    "model_latency_ms": response.latency_ms,
+                },
+                steps,
+            )
             next_status = SessionStatus.RUNNING if result.status.value == "success" else SessionStatus.WAITING
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)
