@@ -71,7 +71,7 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         <form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button type="submit">Purchase</button></form>
         <form method="post" action="/onboarding"><input name="step" type="number" value="2"><button type="submit">Save onboarding</button></form>
         <form method="post" action="/transfer"><input name="new_member" value="new-owner"><button type="submit">Transfer ownership</button></form>'''
-        body += '<p><a href="/projects">Projects</a> | <a href="/notifications">Notifications</a></p>'
+        body += '<p><a href="/projects">Projects</a> | <a href="/tasks">Tasks</a> | <a href="/billing">Billing</a> | <a href="/notifications">Notifications</a></p>'
         return HTMLResponse(_page("Account dashboard", body))
 
     @app.post("/purchase")
@@ -92,12 +92,12 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
     @app.get("/projects", response_class=HTMLResponse)
     async def projects(request: Request) -> HTMLResponse:
         current_id = account_id(request)
-        return HTMLResponse(_page("Projects", '<form method="post"><input name="name" placeholder="Project name" required><button>Create project</button></form><p>Create a project, then use the API tools to add tasks.</p><a href="/dashboard">Back</a>'))
+        return HTMLResponse(_page("Projects", '<form method="post"><input name="name" value="Payments migration" required><button>Create project</button></form><p>After creating a project, continue to Tasks.</p><a href="/tasks">Tasks</a> | <a href="/dashboard">Back</a>'))
 
     @app.post("/projects")
     async def create_project(request: Request, name: str = Form(...)) -> RedirectResponse:
-        business.create_project(account_id(request), f"project-{uuid4().hex[:8]}", name)
-        return RedirectResponse("/projects", status_code=303)
+        business.create_project(account_id(request), "project-1", name)
+        return RedirectResponse("/tasks", status_code=303)
 
     @app.post("/invitations")
     async def invite(request: Request, email: str = Form(...)) -> RedirectResponse:
