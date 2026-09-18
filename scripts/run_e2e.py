@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import uvicorn
 
-from synthetic_lab.contracts import Action, AgentDecision, BudgetConfig, DecisionKind, ModelResponse, PersonaRecord, RunRecord, SessionRecord
+from synthetic_lab.contracts import Action, AgentDecision, BudgetConfig, DecisionKind, Finding, FindingStatus, ModelResponse, PersonaRecord, ReplayStatus, RunRecord, SessionRecord
 from synthetic_lab.config import Settings
 from synthetic_lab.demo.app import create_demo_app
 from synthetic_lab.demo.store import DemoStore
@@ -202,7 +202,27 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
         payload: dict[str, Any] = {"signup_verified": signup_verified, "workflow_verified": workflow_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": memory_count, "event_count": len(events)}
         Path("artifacts").mkdir(exist_ok=True)
         payload.update(database_backend='postgresql' if dsn else 'sqlite', state_backend='postgresql' if dsn else 'in_memory', database_schema=schema, model_mode='qwen' if real_model else 'scripted', business_state=store.workflow_snapshot(), milestones=milestones(store.workflow_snapshot()) if workflow else [])
-        payload.update(duration_seconds=round(time.monotonic()-started, 2), findings=findings(store.workflow_snapshot(), trace) if workflow else [])
+        workflow_findings = findings(store.workflow_snapshot(), trace) if workflow else []
+        finding_reports = []
+        if workflow_findings:
+            tool_events = [event for event in events if event.kind == "tool_result"]
+            for item in workflow_findings:
+                evidence_ids = [tool_events[index].id for index in item["action_indices"]]
+                finding = Finding(
+                    id=str(uuid4()), run_id=run_id, session_id=session_id,
+                    invariant_id=item["invariant"], status=FindingStatus.CONFIRMED,
+                    expected=item["expected"], actual=item["actual"], evidence_ids=evidence_ids,
+                    verifier_version="workflow-state-check-v1", replay_status=ReplayStatus.NOT_ATTEMPTED,
+                )
+                await state.save_finding(finding)
+                report = ReportBuilder().build(
+                    finding, events, [],
+                    explanation="Independent workflow-state check compared the post-action business state to the expected invariant.",
+                )
+                report_path = Path("artifacts") / f"finding-{finding.id}.json"
+                report_path.write_text(json.dumps(report.as_dict(), indent=2, default=str), encoding="utf-8")
+                finding_reports.append({"finding_id": finding.id, "report_path": str(report_path), "evidence_event_ids": evidence_ids})
+        payload.update(duration_seconds=round(time.monotonic()-started, 2), findings=workflow_findings, finding_reports=finding_reports)
         Path(f"artifacts/e2e-{run_id}.json").write_text(json.dumps(payload, indent=2, default=str), encoding='utf-8')
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(json.dumps(payload, indent=2, default=str))
