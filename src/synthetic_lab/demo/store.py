@@ -105,11 +105,11 @@ class DemoStore:
         return None if row is None else str(row["role"])
 
     def create_project(self, account_id: str, project_id: str, name: str) -> None:
-        self.connection.execute("INSERT INTO projects(id,account_id,name,created_at) VALUES (?,?,?,?)", (project_id, account_id, name, self.business_time.isoformat()))
+        self.connection.execute("INSERT OR IGNORE INTO projects(id,account_id,name,created_at) VALUES (?,?,?,?)", (project_id, account_id, name, self.business_time.isoformat()))
         self.connection.commit()
 
     def create_task(self, project_id: str, task_id: str, title: str, assignee: str | None = None) -> None:
-        self.connection.execute("INSERT INTO tasks(id,project_id,title,status,assignee) VALUES (?,?,?,?,?)", (task_id, project_id, title, "pending", assignee))
+        self.connection.execute("INSERT OR IGNORE INTO tasks(id,project_id,title,status,assignee) VALUES (?,?,?,?,?)", (task_id, project_id, title, "pending", assignee))
         self.connection.commit()
 
     def complete_task(self, task_id: str) -> None:
@@ -128,7 +128,7 @@ class DemoStore:
         self.connection.commit()
 
     def subscribe(self, account_id: str, subscription_id: str) -> None:
-        self.connection.execute("INSERT INTO subscriptions(id,account_id,status,started_at) VALUES (?,?,?,?)", (subscription_id, account_id, "active", self.business_time.isoformat()))
+        self.connection.execute("INSERT OR IGNORE INTO subscriptions(id,account_id,status,started_at) VALUES (?,?,?,?)", (subscription_id, account_id, "active", self.business_time.isoformat()))
         self.connection.commit()
 
     def cancel_subscription(self, subscription_id: str) -> None:

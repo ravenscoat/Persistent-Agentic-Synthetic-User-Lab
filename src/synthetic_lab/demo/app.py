@@ -114,13 +114,13 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
     async def tasks(request: Request) -> HTMLResponse:
         account_id(request)
         body = '''<form method="post" action="/tasks"><input name="project_id" value="project-1"><input name="title" placeholder="Task title" required><button>Create task</button></form>
-        <form method="post" action="/tasks/task-1/complete"><button>Complete task-1</button></form><a href="/dashboard">Back</a>'''
+        <form method="post" action="/tasks/task-1/complete"><button>Complete task-1</button></form><a href="/billing">Billing</a> | <a href="/dashboard">Back</a>'''
         return HTMLResponse(_page("Tasks", body))
 
     @app.post("/tasks")
     async def create_task(request: Request, project_id: str = Form(...), title: str = Form(...)) -> RedirectResponse:
         account_id(request)
-        business.create_task(project_id, f"task-{uuid4().hex[:8]}", title)
+        business.create_task(project_id, "task-1", title)
         return RedirectResponse("/tasks", status_code=303)
 
     @app.post("/tasks/{task_id}/complete")

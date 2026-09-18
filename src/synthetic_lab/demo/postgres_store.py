@@ -115,13 +115,13 @@ class PostgresDemoStore:
     def create_project(self, account_id: str, project_id: str, name: str) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("INSERT INTO sul_demo_projects(id,account_id,name,created_at) VALUES (%s,%s,%s,%s)", (project_id, account_id, name, self.business_time))
+                cursor.execute("INSERT INTO sul_demo_projects(id,account_id,name,created_at) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", (project_id, account_id, name, self.business_time))
             connection.commit()
 
     def create_task(self, project_id: str, task_id: str, title: str, assignee: str | None = None) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("INSERT INTO sul_demo_tasks(id,project_id,title,status,assignee) VALUES (%s,%s,%s,'pending',%s)", (task_id, project_id, title, assignee))
+                cursor.execute("INSERT INTO sul_demo_tasks(id,project_id,title,status,assignee) VALUES (%s,%s,%s,'pending',%s) ON CONFLICT DO NOTHING", (task_id, project_id, title, assignee))
             connection.commit()
 
     def complete_task(self, task_id: str) -> None:
@@ -149,7 +149,7 @@ class PostgresDemoStore:
     def subscribe(self, account_id: str, subscription_id: str) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("INSERT INTO sul_demo_subscriptions(id,account_id,status,started_at) VALUES (%s,%s,'active',%s)", (subscription_id, account_id, self.business_time))
+                cursor.execute("INSERT INTO sul_demo_subscriptions(id,account_id,status,started_at) VALUES (%s,%s,'active',%s) ON CONFLICT DO NOTHING", (subscription_id, account_id, self.business_time))
             connection.commit()
 
     def cancel_subscription(self, subscription_id: str) -> None:

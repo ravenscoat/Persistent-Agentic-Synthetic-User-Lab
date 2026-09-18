@@ -5,6 +5,7 @@ import ast
 import asyncio
 import json
 import argparse
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from synthetic_lab.contracts import Action, AgentDecision, BudgetConfig, Decisio
 from synthetic_lab.config import Settings
 from synthetic_lab.demo.app import create_demo_app
 from synthetic_lab.demo.store import DemoStore
+from synthetic_lab.demo.postgres_store import PostgresDemoStore
 from synthetic_lab.browser.tools import BrowserToolRegistry, PlaywrightBrowserSession
 from synthetic_lab.memory.context import MemoryContextAssembler
 from synthetic_lab.memory.embeddings import OllamaEmbeddingClient
@@ -41,7 +43,7 @@ class SmokeModel:
         except (SyntaxError, ValueError):
             return None
         for item in elements:
-            if name in str(item.get("name", "")).casefold():
+            if name.casefold() in str(item.get("name", "")).casefold():
                 return str(item.get("target"))
         return None
 
@@ -75,8 +77,73 @@ class SmokeModel:
         return page.rsplit("Observation: ", 1)[-1].split("\n", 1)[0].strip()
 
 
-async def main(real_model: bool = False) -> int:
-    store = DemoStore(fault="trial_expires_day_5")
+class WorkflowModel(SmokeModel):
+    """Deterministic multi-page persona used to exercise the SaaS workflow."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.step = 0
+        self.email = f"workflow-{uuid4().hex[:8]}@example.test"
+
+    async def decide(self, messages, decision_schema=None, generation_options=None) -> ModelResponse:
+        page = str(messages[1]["content"])
+        url = page.split("URL: ", 1)[1].split("\n", 1)[0]
+        def action(tool: str, name: str | None = None, value: str | None = None, url_value: str | None = None) -> AgentDecision:
+            args = {"url": url_value} if tool == "navigate" else {"target": self._element(page, name or "")}
+            if tool == "fill":
+                args["value"] = value
+            return AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name=tool, arguments=args))
+        if url.endswith("/"):
+            decision = action("navigate", url_value="/signup")
+        elif "/signup" in url and "dashboard" not in url:
+            email = self._element(page, "email")
+            password = self._element(page, "password")
+            if not email:
+                decision = AgentDecision(kind=DecisionKind.FINISH, summary="signup controls unavailable")
+            elif "filled': True" not in page.split("Elements:", 1)[1].split("email", 1)[-1][:100]:
+                decision = action("fill", "email", self.email)
+            elif password and self.step < 3:
+                self.step = 3
+                decision = action("fill", "password", "workflow-password")
+            else:
+                decision = action("click", "create account")
+        elif "/dashboard" in url and self.step >= 10:
+            decision = action("click", "Billing")
+        elif "/dashboard" in url and self.step < 4:
+            self.step = 4
+            decision = action("click", "Projects")
+        elif "/projects" in url:
+            decision = action("fill", "name", "Payments migration",) if self.step == 4 else action("click", "Create project")
+            self.step = 5
+        elif "/tasks" in url and self.step <= 7:
+            if self.step == 5:
+                decision = action("fill", "title", "Verify payment retry")
+                self.step = 6
+            elif self.step == 6:
+                decision = action("click", "Create task")
+                self.step = 7
+            else:
+                decision = action("click", "Complete task-1")
+                self.step = 8
+        elif "/tasks" in url:
+            decision = action("click", "Billing")
+        elif "/billing" in url and self.step == 8:
+            decision = action("click", "Start subscription")
+            self.step = 9
+        elif "/billing" in url and self.step == 9:
+            decision = action("click", "Charge account")
+            self.step = 10
+        elif "/billing" in url and self.step == 10:
+            decision = action("click", "Cancel subscription")
+            self.step = 11
+        else:
+            decision = AgentDecision(kind=DecisionKind.FINISH, summary="workflow completed")
+        return ModelResponse(decision=decision, model_id="workflow-scripted", latency_ms=0)
+
+
+async def main(real_model: bool = False, workflow: bool = False) -> int:
+    dsn = os.getenv("SUL_POSTGRES_DSN")
+    store = PostgresDemoStore(dsn, fault=os.getenv("SUL_BUSINESS_FAULT")) if dsn else DemoStore(fault="trial_expires_day_5")
     app = create_demo_app(store)
     config = uvicorn.Config(app, host="127.0.0.1", port=8011, log_level="error")
     server = uvicorn.Server(config)
@@ -94,22 +161,33 @@ async def main(real_model: bool = False) -> int:
         await browser.page.goto("http://127.0.0.1:8011/")
         observation = await browser.observe()
         tools = BrowserToolRegistry({persona.id: browser})
-        model = build_local_model(Settings()) if real_model else SmokeModel()
+        model = build_local_model(Settings()) if real_model else (WorkflowModel() if workflow else SmokeModel())
         async def signup_complete():
             return store.account_exists() and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
-        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=8, max_model_requests=10), completion_check=signup_complete)
+        goal = "Create an account, create a project, create and complete a task, then open billing, start a subscription, charge the account, cancel the subscription, and finish." if workflow else persona.goal
+        persona = persona.model_copy(update={"goal": goal})
+        async def workflow_complete():
+            task_ok = False
+            try:
+                task_ok = store.task_status("task-1") == "completed"
+            except KeyError:
+                pass
+            return store.account_exists() and task_ok and browser.page.url.endswith("/billing")
+        completion_check = workflow_complete if workflow else signup_complete
+        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=20 if workflow else 8, max_model_requests=25 if workflow else 10), completion_check=completion_check)
         result = await agent.run(persona, session, observation)
         state_path = await browser.save_state()
         store.advance_days(6)
         account_id = "account-1" if store.account_exists("account-1") else None
         signup_verified = account_id is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
+        workflow_verified = await workflow_complete() if workflow else signup_verified
         verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, account_id)) if account_id else None
         trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in state.events[run_id] if event.kind == "tool_result"]
-        payload: dict[str, Any] = {"signup_verified": signup_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
+        payload: dict[str, Any] = {"signup_verified": signup_verified, "workflow_verified": workflow_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
         Path("artifacts").mkdir(exist_ok=True)
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(json.dumps(payload, indent=2, default=str))
-        return 0 if result.status == "completed" and signup_verified else 1
+        return 0 if result.status == "completed" and workflow_verified else 1
     finally:
         await browser.close()
         if real_model and hasattr(model, "aclose"):
@@ -122,7 +200,8 @@ async def main(real_model: bool = False) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real-model", action="store_true", help="use the configured Ollama model instead of the deterministic smoke policy")
+    parser.add_argument("--workflow", action="store_true", help="run the multi-page SaaS workflow policy")
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(main(real_model=args.real_model)))
+    raise SystemExit(asyncio.run(main(real_model=args.real_model, workflow=args.workflow)))
     def __init__(self) -> None:
         self.form_step = 0
