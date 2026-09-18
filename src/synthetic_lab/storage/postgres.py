@@ -10,13 +10,177 @@ import asyncio
 import json
 import re
 from collections.abc import Sequence
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable
 
-from synthetic_lab.contracts import MemoryRecord, MemoryStatus, MemoryType, Trust
+from synthetic_lab.contracts import (
+    Event, Expectation, Finding, MemoryRecord, MemoryStatus, MemoryType,
+    RunRecord, RunStatus, SessionRecord, SessionStatus, Trust,
+)
 
 
 class PostgresRepositoryError(RuntimeError):
     """A PostgreSQL operation failed or the optional driver is unavailable."""
+
+
+class PostgresStateRepository:
+    """Durable run/session/event repository with transactionally saved checkpoints."""
+
+    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+        self._connection_factory = connection_factory
+
+    @classmethod
+    def from_dsn(cls, dsn: str, *, schema: str | None = None) -> "PostgresStateRepository":
+        try:
+            import psycopg
+        except ImportError as exc:  # pragma: no cover
+            raise PostgresRepositoryError("install synthetic-user-lab[postgres] first") from exc
+        options = {"options": f"-c search_path={schema}"} if schema else {}
+        return cls(lambda: psycopg.connect(dsn, **options))
+
+    async def apply_migration(self, migration_path: str | Path) -> None:
+        sql = Path(migration_path).read_text(encoding="utf-8")
+        statements = [statement.strip() for statement in sql.split(";") if statement.strip()]
+        def apply() -> None:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    for statement in statements:
+                        cursor.execute(statement)
+                connection.commit()
+        try:
+            await asyncio.to_thread(apply)
+        except Exception as exc:
+            raise PostgresRepositoryError("PostgreSQL state migration failed") from exc
+
+    async def create_run(self, run: RunRecord) -> RunRecord:
+        await self._write(
+            "INSERT INTO sul_runs(id,scenario_id,status,created_at,business_time,config_snapshot,model_metadata) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
+            (run.id, run.scenario_id, run.status.value, run.created_at, run.business_time, json.dumps(run.config_snapshot), json.dumps(run.model_metadata)),
+        )
+        return run
+
+    async def get_run(self, run_id: str) -> RunRecord:
+        rows = await self._read("SELECT id,scenario_id,status,created_at,business_time,config_snapshot,model_metadata FROM sul_runs WHERE id=%s", (run_id,))
+        if not rows:
+            raise KeyError(f"unknown run: {run_id}")
+        row = rows[0]
+        return RunRecord(id=row[0], scenario_id=row[1], status=RunStatus(row[2]), created_at=row[3], business_time=row[4], config_snapshot=row[5] or {}, model_metadata=row[6] or {})
+
+    async def transition_run(self, run_id: str, status: RunStatus | str) -> RunRecord:
+        run = await self.get_run(run_id)
+        target = RunStatus(status)
+        allowed = {
+            RunStatus.CREATED: {RunStatus.RUNNING, RunStatus.CANCELLED},
+            RunStatus.RUNNING: {RunStatus.PAUSED, RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED},
+            RunStatus.PAUSED: {RunStatus.RUNNING, RunStatus.CANCELLED},
+        }
+        if target != run.status and target not in allowed.get(run.status, set()):
+            raise ValueError(f"invalid run transition: {run.status.value} -> {target.value}")
+        await self._write("UPDATE sul_runs SET status=%s WHERE id=%s", (target.value, run_id))
+        return run.model_copy(update={"status": target})
+
+    async def enqueue_session(self, session: SessionRecord) -> SessionRecord:
+        await self._write(
+            "INSERT INTO sul_sessions(id,run_id,persona_id,status,phase,due_business_time,lease_owner,lease_expires_at,step_count) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (session.id, session.run_id, session.persona_id, session.status.value, session.phase, session.due_business_time, session.lease_owner, session.lease_expires_at, session.step_count),
+        )
+        return session
+
+    async def get_session(self, session_id: str) -> SessionRecord:
+        rows = await self._read("SELECT id,run_id,persona_id,status,phase,due_business_time,lease_owner,lease_expires_at,step_count FROM sul_sessions WHERE id=%s", (session_id,))
+        if not rows:
+            raise KeyError(f"unknown session: {session_id}")
+        return _session(rows[0])
+
+    async def lease_ready_session(self, owner: str, now: datetime, lease_seconds: int) -> SessionRecord | None:
+        def lease() -> SessionRecord | None:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT id,run_id,persona_id,status,phase,due_business_time,lease_owner,lease_expires_at,step_count
+                        FROM sul_sessions WHERE due_business_time <= %s
+                        AND (status='READY' OR (status IN ('LEASED','RUNNING') AND lease_expires_at <= %s))
+                        ORDER BY due_business_time,id FOR UPDATE SKIP LOCKED LIMIT 1""",
+                        (now, now),
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        return None
+                    cursor.execute("UPDATE sul_sessions SET status='LEASED',lease_owner=%s,lease_expires_at=%s WHERE id=%s", (owner, now + timedelta(seconds=lease_seconds), row[0]))
+                connection.commit()
+            return _session(row).model_copy(update={"status": SessionStatus.LEASED, "lease_owner": owner, "lease_expires_at": now + timedelta(seconds=lease_seconds)})
+        return await asyncio.to_thread(lease)
+
+    async def checkpoint_step(self, session_id: str, event: Event, next_session: SessionRecord) -> SessionRecord:
+        def checkpoint() -> None:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT run_id FROM sul_sessions WHERE id=%s FOR UPDATE", (session_id,))
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise KeyError(session_id)
+                    if row[0] != event.run_id or next_session.id != session_id:
+                        raise ValueError("checkpoint scope mismatch")
+                    _insert_event(cursor, event)
+                    _update_session(cursor, next_session)
+                connection.commit()
+        await asyncio.to_thread(checkpoint)
+        return next_session
+
+    async def append_event(self, event: Event) -> Event:
+        def append() -> None:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    _insert_event(cursor, event)
+                connection.commit()
+        await asyncio.to_thread(append)
+        return event
+
+    async def list_events(self, run_id: str, after_sequence: int = -1, limit: int = 100) -> list[Event]:
+        if limit <= 0:
+            return []
+        rows = await self._read(
+            "SELECT id,run_id,persona_id,session_id,sequence_no,kind,wall_time,business_time,payload,artifact_ids FROM sul_events WHERE run_id=%s AND sequence_no>%s ORDER BY sequence_no LIMIT %s",
+            (run_id, after_sequence, limit),
+        )
+        return [Event(id=row[0], run_id=row[1], persona_id=row[2], session_id=row[3], sequence=row[4], kind=row[5], wall_time=row[6], business_time=row[7], payload=row[8] or {}, artifact_ids=row[9] or []) for row in rows]
+
+    async def save_expectation(self, expectation: Expectation) -> Expectation:
+        await self._write("INSERT INTO sul_expectations(id,run_id,persona_id,invariant_id,entity_ids,expected_values,due_business_time,source_spec_id,status) VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status", (expectation.id, expectation.run_id, expectation.persona_id, expectation.invariant_id, json.dumps(expectation.entity_ids), json.dumps(expectation.expected_values), expectation.due_business_time, expectation.source_spec_id, expectation.status))
+        return expectation
+
+    async def save_finding(self, finding: Finding) -> Finding:
+        await self._write("INSERT INTO sul_findings(id,run_id,session_id,invariant_id,status,expected,actual,evidence_ids,verifier_version,replay_status) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status", (finding.id, finding.run_id, finding.session_id, finding.invariant_id, finding.status.value, json.dumps(finding.expected), json.dumps(finding.actual), json.dumps(finding.evidence_ids), finding.verifier_version, finding.replay_status.value))
+        return finding
+
+    async def _read(self, query: str, params: tuple[Any, ...]) -> list[Any]:
+        def read() -> list[Any]:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(query, params)
+                    return cursor.fetchall()
+        return await asyncio.to_thread(read)
+
+    async def _write(self, query: str, params: tuple[Any, ...]) -> None:
+        def write() -> None:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(query, params)
+                connection.commit()
+        await asyncio.to_thread(write)
+
+
+def _session(row: Sequence[Any]) -> SessionRecord:
+    return SessionRecord(id=row[0], run_id=row[1], persona_id=row[2], status=SessionStatus(row[3]), phase=row[4], due_business_time=row[5], lease_owner=row[6], lease_expires_at=row[7], step_count=row[8])
+
+
+def _insert_event(cursor: Any, event: Event) -> None:
+    cursor.execute("INSERT INTO sul_events(id,run_id,persona_id,session_id,sequence_no,kind,wall_time,business_time,payload,artifact_ids) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb) ON CONFLICT(id) DO NOTHING", (event.id, event.run_id, event.persona_id, event.session_id, event.sequence, event.kind, event.wall_time, event.business_time, json.dumps(event.payload), json.dumps(event.artifact_ids)))
+
+
+def _update_session(cursor: Any, session: SessionRecord) -> None:
+    cursor.execute("UPDATE sul_sessions SET status=%s,phase=%s,due_business_time=%s,lease_owner=%s,lease_expires_at=%s,step_count=%s WHERE id=%s", (session.status.value, session.phase, session.due_business_time, session.lease_owner, session.lease_expires_at, session.step_count, session.id))
 
 
 class PostgresMemoryRepository:
@@ -26,12 +190,13 @@ class PostgresMemoryRepository:
         self._connection_factory = connection_factory
 
     @classmethod
-    def from_dsn(cls, dsn: str) -> "PostgresMemoryRepository":
+    def from_dsn(cls, dsn: str, *, schema: str | None = None) -> "PostgresMemoryRepository":
         try:
             import psycopg
         except ImportError as exc:  # pragma: no cover - depends on optional extra
             raise PostgresRepositoryError("install synthetic-user-lab[postgres] first") from exc
-        return cls(lambda: psycopg.connect(dsn))
+        options = {"options": f"-c search_path={schema}"} if schema else {}
+        return cls(lambda: psycopg.connect(dsn, **options))
 
     async def close(self) -> None:
         return None

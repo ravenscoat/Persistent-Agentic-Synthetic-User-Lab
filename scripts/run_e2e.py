@@ -26,6 +26,7 @@ from synthetic_lab.llm import build_local_model
 from synthetic_lab.reporting.reports import ReportBuilder
 from synthetic_lab.runtime.agent import PersonaAgent
 from synthetic_lab.runtime.workflow import WorkflowContext, milestones, findings
+from synthetic_lab.storage import PostgresMemoryRepository, PostgresStateRepository
 from synthetic_lab.storage.in_memory import InMemoryMemoryRepository, InMemoryStateRepository
 from synthetic_lab.verification.invariants import DemoVerificationContext, DemoVerifier
 
@@ -151,13 +152,18 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
     store = PostgresDemoStore(dsn, fault=fault, schema=schema) if dsn else DemoStore(fault=fault)
     if dsn:
         await store.apply_migration(str(Path(__file__).resolve().parents[1] / 'migrations' / '003_demo_business_postgres.sql'))
+    if dsn:
+        state = PostgresStateRepository.from_dsn(dsn, schema=schema)
+        memory = PostgresMemoryRepository.from_dsn(dsn, schema=schema)
+        await state.apply_migration(str(Path(__file__).resolve().parents[1] / 'migrations' / '002_initial_postgres.sql'))
+    else:
+        state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
     app = create_demo_app(store)
     config = uvicorn.Config(app, host="127.0.0.1", port=8011, log_level="error")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     await asyncio.sleep(0.3)
     run_id, session_id, now = str(uuid4()), str(uuid4()), datetime.now(timezone.utc)
-    state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
     await state.create_run(RunRecord(id=run_id, scenario_id="trial_return", created_at=now, business_time=now))
     session = SessionRecord(id=session_id, run_id=run_id, persona_id="smoke-persona", phase="signup", due_business_time=now)
     await state.enqueue_session(session)
@@ -185,12 +191,14 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
         signup_verified = account_id is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
         workflow_verified = await workflow_complete() if workflow else signup_verified
         verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, account_id)) if account_id and not workflow else None
-        trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in state.events[run_id] if event.kind == "tool_result"]
+        events = await state.list_events(run_id, limit=1000)
+        trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in events if event.kind == "tool_result"]
         if workflow:
             signup_verified = store.account_exists('account-1') and any(action['url'] and action['url'].endswith('/dashboard') for action in trace)
-        payload: dict[str, Any] = {"signup_verified": signup_verified, "workflow_verified": workflow_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
+        memory_count = len(await memory.list_recent(run_id, persona.id, "tool_log", 1000))
+        payload: dict[str, Any] = {"signup_verified": signup_verified, "workflow_verified": workflow_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": memory_count, "event_count": len(events)}
         Path("artifacts").mkdir(exist_ok=True)
-        payload.update(database_backend='postgresql' if dsn else 'sqlite', database_schema=schema, model_mode='qwen' if real_model else 'scripted', business_state=store.workflow_snapshot(), milestones=milestones(store.workflow_snapshot()) if workflow else [])
+        payload.update(database_backend='postgresql' if dsn else 'sqlite', state_backend='postgresql' if dsn else 'in_memory', database_schema=schema, model_mode='qwen' if real_model else 'scripted', business_state=store.workflow_snapshot(), milestones=milestones(store.workflow_snapshot()) if workflow else [])
         payload.update(duration_seconds=round(time.monotonic()-started, 2), findings=findings(store.workflow_snapshot(), trace) if workflow else [])
         Path(f"artifacts/e2e-{run_id}.json").write_text(json.dumps(payload, indent=2, default=str), encoding='utf-8')
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")

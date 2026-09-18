@@ -39,6 +39,10 @@ With SUL_POSTGRES_DSN set, the demo app uses PostgreSQL for business state.
 The same seeded faults can be selected with SUL_BUSINESS_FAULT, for example
 duplicate_charge or owner_transfer_leak.
 
+Agent state and memory also use PostgreSQL during scripts/run_e2e.py runs
+when this variable is set. See [restart recovery](docs/restart-recovery.md) for
+the crash-and-resume proof.
+
 ## Run locally
 
 Create the environment and install the test dependencies:

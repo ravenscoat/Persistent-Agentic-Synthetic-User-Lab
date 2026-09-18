@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from synthetic_lab.contracts import RunRecord, SessionRecord
+from synthetic_lab.contracts import Event, RunRecord, SessionRecord, SessionStatus
 from synthetic_lab.runtime.scheduler import DurableScheduler
 from synthetic_lab.storage import InMemoryStateRepository
 
@@ -38,4 +38,20 @@ async def test_expired_lease_is_reclaimed_after_worker_restart() -> None:
     recovered = await state.lease_ready_session("worker-b", now + timedelta(seconds=11), lease_seconds=10)
     assert recovered is not None
     assert recovered.id == "s-restart"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_running_session_is_reclaimed_after_worker_restart() -> None:
+    now = datetime.now(timezone.utc)
+    state = InMemoryStateRepository()
+    await state.create_run(RunRecord(id="r-running", scenario_id="demo", created_at=now, business_time=now))
+    await state.enqueue_session(SessionRecord(id="s-running", run_id="r-running", persona_id="p1", phase="task", due_business_time=now))
+    leased = await state.lease_ready_session("worker-a", now, lease_seconds=10)
+    assert leased is not None
+    interrupted = leased.model_copy(update={"status": SessionStatus.RUNNING, "step_count": 3})
+    await state.checkpoint_step("s-running", Event(id="event-running", run_id="r-running", session_id="s-running", sequence=0, kind="tool_result", wall_time=now, business_time=now), interrupted)
+    recovered = await state.lease_ready_session("worker-b", now + timedelta(seconds=11), lease_seconds=10)
+    assert recovered is not None
+    assert recovered.id == "s-running"
+    assert recovered.step_count == 3
     assert recovered.lease_owner == "worker-b"

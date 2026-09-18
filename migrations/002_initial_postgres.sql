@@ -28,3 +28,60 @@ CREATE TABLE IF NOT EXISTS sul_memory (
 
 CREATE INDEX IF NOT EXISTS sul_memory_scope_ix
   ON sul_memory (run_id, persona_id, memory_type, status, valid_from DESC);
+
+CREATE TABLE IF NOT EXISTS sul_sessions (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES sul_runs(id),
+  persona_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  due_business_time TIMESTAMPTZ NOT NULL,
+  lease_owner TEXT,
+  lease_expires_at TIMESTAMPTZ,
+  step_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS sul_sessions_ready_ix
+  ON sul_sessions (status, due_business_time, lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS sul_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES sul_runs(id),
+  persona_id TEXT,
+  session_id TEXT,
+  sequence_no BIGINT NOT NULL,
+  kind TEXT NOT NULL,
+  wall_time TIMESTAMPTZ NOT NULL,
+  business_time TIMESTAMPTZ NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  UNIQUE (run_id, sequence_no)
+);
+
+CREATE INDEX IF NOT EXISTS sul_events_run_sequence_ix
+  ON sul_events (run_id, sequence_no);
+
+CREATE TABLE IF NOT EXISTS sul_expectations (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES sul_runs(id),
+  persona_id TEXT NOT NULL,
+  invariant_id TEXT NOT NULL,
+  entity_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  expected_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+  due_business_time TIMESTAMPTZ NOT NULL,
+  source_spec_id TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sul_findings (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES sul_runs(id),
+  session_id TEXT NOT NULL,
+  invariant_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  expected JSONB,
+  actual JSONB,
+  evidence_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  verifier_version TEXT NOT NULL,
+  replay_status TEXT NOT NULL
+);

@@ -74,7 +74,7 @@ class InMemoryStateRepository:
             candidates = sorted(self.sessions.values(), key=lambda s: (s.due_business_time, s.id))
             for session in candidates:
                 expired = session.lease_expires_at is not None and session.lease_expires_at <= now
-                ready = session.status is SessionStatus.READY or (session.status is SessionStatus.LEASED and expired)
+                ready = session.status is SessionStatus.READY or (session.status in {SessionStatus.LEASED, SessionStatus.RUNNING} and expired)
                 if ready and session.due_business_time <= now:
                     session.status = SessionStatus.LEASED
                     session.lease_owner = owner
