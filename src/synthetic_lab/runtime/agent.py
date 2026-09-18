@@ -95,11 +95,11 @@ class PersonaAgent:
                     feedback = f"Completion check failed. You are still at {observation.url}. Filling fields does not submit the form. If required fields are filled, choose the submit button. Return an action decision until the requested destination is visible."
                     continue
                 completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
-                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", {"summary": decision.summary}), completed)
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids, "context_tokens": bundle.estimated_tokens}), completed)
                 return AgentRunResult("completed", decision.summary or "finished", steps, requests, observation.id)
             if decision.kind.value == "blocked":
                 failed = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
-                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_blocked", {"summary": decision.summary}), failed)
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_blocked", {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids}), failed)
                 return AgentRunResult("blocked", decision.summary or "blocked", steps, requests, observation.id)
             if decision.kind.value == "memory_query":
                 records = await self.memory.search(persona.run_id, persona.id, decision.query or "", 5)
