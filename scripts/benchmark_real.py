@@ -9,16 +9,21 @@ import time
 from pathlib import Path
 
 
-def run_once(timeout: int) -> dict[str, object]:
+def run_once(timeout: int, workflow: bool = False) -> dict[str, object]:
     started = time.perf_counter()
     try:
-        completed = subprocess.run([sys.executable, str(Path(__file__).with_name("run_e2e.py")), "--real-model"], capture_output=True, text=True, timeout=timeout)
+        command = [sys.executable, str(Path(__file__).with_name("run_e2e.py")), "--real-model"]
+        if workflow:
+            command.append('--workflow')
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
         row: dict[str, object] = {"exit_code": completed.returncode, "timed_out": False, "duration_seconds": round(time.perf_counter() - started, 2)}
         try:
             report = json.loads(completed.stdout)
             row["agent"] = report.get("agent")
             row["verification"] = report.get("verification")
-            row["completed"] = completed.returncode == 0 and report.get("signup_verified") is True and report.get("agent", {}).get("status") == "completed"
+            row["completed"] = completed.returncode == 0 and report.get("workflow_verified" if workflow else "signup_verified") is True and report.get("agent", {}).get("status") == "completed"
+            for key in ('database_schema', 'business_state', 'milestones', 'findings'):
+                row[key] = report.get(key)
             row["actions"] = report.get("actions", [])
         except json.JSONDecodeError:
             row["completed"] = False
@@ -31,12 +36,13 @@ def run_once(timeout: int) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument('--workflow', action='store_true')
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--output", type=Path, default=Path("artifacts/real-model-benchmark.json"))
     args = parser.parse_args()
     if args.runs < 1 or args.timeout < 1:
         parser.error("runs and timeout must be positive")
-    rows = [run_once(args.timeout) for _ in range(args.runs)]
+    rows = [run_once(args.timeout, args.workflow) for _ in range(args.runs)]
     payload = {"runs": rows, "run_count": len(rows), "completion_rate": sum(bool(row["completed"]) for row in rows) / len(rows), "verification_confirmed": sum(row.get("verification", {}).get("verdict") == "confirmed" for row in rows if isinstance(row.get("verification"), dict))}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")

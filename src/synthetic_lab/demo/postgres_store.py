@@ -11,12 +11,19 @@ from .store import PurchaseResult
 class PostgresDemoStore:
     """PostgreSQL business store with the same public operations as DemoStore."""
 
-    def __init__(self, dsn: str, *, fault: str | None = None) -> None:
+    def __init__(self, dsn: str, *, fault: str | None = None, schema: str | None = None) -> None:
         try:
             import psycopg
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("install synthetic-user-lab[postgres] first") from exc
-        self._connect = lambda: psycopg.connect(dsn)
+        if schema:
+            import re
+            if not re.fullmatch(r"sul_eval_[a-f0-9]{32}", schema):
+                raise ValueError("invalid evaluation schema")
+            from psycopg import sql
+            with psycopg.connect(dsn) as connection:
+                connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        self._connect = lambda: psycopg.connect(dsn, **({"options": f"-c search_path={schema}"} if schema else {}))
         self.fault = fault
         self.business_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -33,6 +40,21 @@ class PostgresDemoStore:
 
     def close(self) -> None:
         return None
+
+    def workflow_snapshot(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM sul_demo_accounts")
+                accounts = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM sul_demo_projects WHERE account_id='account-1'")
+                projects = cursor.fetchone()[0]
+                cursor.execute("SELECT status FROM sul_demo_tasks WHERE id='task-1' AND project_id='project-1'")
+                task = cursor.fetchone()
+                cursor.execute("SELECT status FROM sul_demo_subscriptions WHERE id='subscription-1' AND account_id='account-1'")
+                subscription = cursor.fetchone()
+                cursor.execute("SELECT COUNT(*), COALESCE(SUM(amount_cents),0) FROM sul_demo_invoices WHERE account_id='account-1' AND operation_id='purchase-1'")
+                charges, total = cursor.fetchone()
+        return dict(accounts=accounts, projects=projects, task=task[0] if task else None, subscription=subscription[0] if subscription else None, charges=charges, total=int(total))
 
     def advance_days(self, days: int) -> datetime:
         if days < 0:

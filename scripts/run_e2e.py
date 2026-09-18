@@ -6,6 +6,7 @@ import asyncio
 import json
 import argparse
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from synthetic_lab.memory.embeddings import OllamaEmbeddingClient
 from synthetic_lab.llm import build_local_model
 from synthetic_lab.reporting.reports import ReportBuilder
 from synthetic_lab.runtime.agent import PersonaAgent
+from synthetic_lab.runtime.workflow import WorkflowContext, milestones, findings
 from synthetic_lab.storage.in_memory import InMemoryMemoryRepository, InMemoryStateRepository
 from synthetic_lab.verification.invariants import DemoVerificationContext, DemoVerifier
 
@@ -142,8 +144,13 @@ class WorkflowModel(SmokeModel):
 
 
 async def main(real_model: bool = False, workflow: bool = False) -> int:
+    started = time.monotonic()
     dsn = os.getenv("SUL_POSTGRES_DSN")
-    store = PostgresDemoStore(dsn, fault=os.getenv("SUL_BUSINESS_FAULT")) if dsn else DemoStore(fault="trial_expires_day_5")
+    schema = f"sul_eval_{uuid4().hex}" if dsn else None
+    fault = os.getenv("SUL_BUSINESS_FAULT") or (None if workflow else "trial_expires_day_5")
+    store = PostgresDemoStore(dsn, fault=fault, schema=schema) if dsn else DemoStore(fault=fault)
+    if dsn:
+        await store.apply_migration(str(Path(__file__).resolve().parents[1] / 'migrations' / '003_demo_business_postgres.sql'))
     app = create_demo_app(store)
     config = uvicorn.Config(app, host="127.0.0.1", port=8011, log_level="error")
     server = uvicorn.Server(config)
@@ -167,24 +174,25 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
         goal = ("Follow this exact sequence once: create an account; from the dashboard open Projects; create one project; continue to Tasks; create one task; complete task-1; open Billing; start one subscription; charge the account once; return to Billing; cancel subscription-1; then finish. Do not repeat a successful action and do not start another workflow.") if workflow else persona.goal
         persona = persona.model_copy(update={"goal": goal})
         async def workflow_complete():
-            task_ok = False
-            try:
-                task_ok = store.task_status("task-1") == "completed"
-            except KeyError:
-                pass
-            return store.account_exists() and task_ok and browser.page.url.endswith("/billing")
+            return all(milestones(store.workflow_snapshot()))
         completion_check = workflow_complete if workflow else signup_complete
-        agent = PersonaAgent(model=model, context=MemoryContextAssembler(memory, tool_registry=tools), tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=20 if workflow else 8, max_model_requests=25 if workflow else 10), completion_check=completion_check)
+        context = WorkflowContext(memory, store=store, tool_registry=tools) if workflow else MemoryContextAssembler(memory, tool_registry=tools)
+        agent = PersonaAgent(model=model, context=context, tools=tools, state=state, memory=memory, budgets=BudgetConfig(max_steps=30 if workflow else 8, max_model_requests=40 if workflow else 10), completion_check=completion_check)
         result = await agent.run(persona, session, observation)
         state_path = await browser.save_state()
         store.advance_days(6)
         account_id = "account-1" if store.account_exists("account-1") else None
         signup_verified = account_id is not None and browser.page.url.endswith('/dashboard') and await browser.page.title() == 'Account dashboard'
         workflow_verified = await workflow_complete() if workflow else signup_verified
-        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, account_id)) if account_id else None
+        verified = await DemoVerifier().check("trial_access_seven_days", DemoVerificationContext(store, account_id)) if account_id and not workflow else None
         trace = [{"tool": event.payload.get("tool_name"), "target": event.payload.get("target_name"), "status": event.payload.get("status"), "url": event.payload.get("data", {}).get("url")} for event in state.events[run_id] if event.kind == "tool_result"]
+        if workflow:
+            signup_verified = store.account_exists('account-1') and any(action['url'] and action['url'].endswith('/dashboard') for action in trace)
         payload: dict[str, Any] = {"signup_verified": signup_verified, "workflow_verified": workflow_verified, "actions": trace, "agent": result.__dict__, "verification": verified.model_dump(mode="json") if verified else None, "browser_state": str(state_path), "memory_count": len(memory.records), "event_count": len(state.events[run_id])}
         Path("artifacts").mkdir(exist_ok=True)
+        payload.update(database_backend='postgresql' if dsn else 'sqlite', database_schema=schema, model_mode='qwen' if real_model else 'scripted', business_state=store.workflow_snapshot(), milestones=milestones(store.workflow_snapshot()) if workflow else [])
+        payload.update(duration_seconds=round(time.monotonic()-started, 2), findings=findings(store.workflow_snapshot(), trace) if workflow else [])
+        Path(f"artifacts/e2e-{run_id}.json").write_text(json.dumps(payload, indent=2, default=str), encoding='utf-8')
         Path("artifacts/e2e-report.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(json.dumps(payload, indent=2, default=str))
         return 0 if result.status == "completed" and workflow_verified else 1

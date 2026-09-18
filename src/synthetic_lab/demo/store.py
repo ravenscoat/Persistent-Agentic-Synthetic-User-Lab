@@ -41,6 +41,14 @@ class DemoStore:
     def close(self) -> None:
         self.connection.close()
 
+    def workflow_snapshot(self) -> dict[str, Any]:
+        accounts = self.connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        projects = self.connection.execute("SELECT COUNT(*) FROM projects WHERE account_id='account-1'").fetchone()[0]
+        task = self.connection.execute("SELECT status FROM tasks WHERE id='task-1' AND project_id='project-1'").fetchone()
+        subscription = self.connection.execute("SELECT status FROM subscriptions WHERE id='subscription-1' AND account_id='account-1'").fetchone()
+        charges, total = self.connection.execute("SELECT COUNT(*), COALESCE(SUM(amount_cents),0) FROM ledger WHERE account_id='account-1' AND operation_id='purchase-1'").fetchone()
+        return dict(accounts=accounts, projects=projects, task=task[0] if task else None, subscription=subscription[0] if subscription else None, charges=charges, total=total)
+
     def advance_days(self, days: int) -> datetime:
         if days < 0:
             raise ValueError("business time cannot move backwards")

@@ -113,8 +113,13 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
     @app.get("/tasks", response_class=HTMLResponse)
     async def tasks(request: Request) -> HTMLResponse:
         account_id(request)
-        body = '''<form method="post" action="/tasks"><input name="project_id" value="project-1"><input name="title" placeholder="Task title" required><button>Create task</button></form>
-        <form method="post" action="/tasks/task-1/complete"><button>Complete task-1</button></form><a href="/billing">Billing</a> | <a href="/dashboard">Back</a>'''
+        status = business.workflow_snapshot()['task']
+        body = f'<p>Task status: {status or "No task created"}</p>'
+        if status is None:
+            body += '<form method="post" action="/tasks"><input name="project_id" value="project-1"><label>Task title <input name="title" required></label><button>Create task</button></form>'
+        elif status == 'pending':
+            body += '<form method="post" action="/tasks/task-1/complete"><button>Complete task-1</button></form>'
+        body += '<a href="/billing">Billing</a> | <a href="/dashboard">Back</a>'
         return HTMLResponse(_page("Tasks", body))
 
     @app.post("/tasks")
@@ -132,10 +137,15 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
     @app.get("/billing", response_class=HTMLResponse)
     async def billing(request: Request) -> HTMLResponse:
         current_id = account_id(request)
-        return HTMLResponse(_page("Billing", f'''<form method="post" action="/billing/subscribe"><button>Start subscription</button></form>
-        <form method="post" action="/billing/cancel"><input name="subscription_id" value="subscription-1"><button>Cancel subscription</button></form>
-        <form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button>Charge account</button></form>
-        <p>Account: {current_id}</p><a href="/dashboard">Back</a>'''))
+        state = business.workflow_snapshot()
+        body = f'<p>Subscription: {state["subscription"] or "None"}</p><p>Charges: {state["charges"]}; total cents: {state["total"]}</p>'
+        if state['subscription'] is None:
+            body += '<form method="post" action="/billing/subscribe"><button>Start subscription</button></form>'
+        if state['subscription'] == 'active':
+            body += '<form method="post" action="/billing/cancel"><input name="subscription_id" value="subscription-1"><button>Cancel subscription</button></form>'
+        if state['charges'] == 0:
+            body += '<form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button>Charge account</button></form>'
+        return HTMLResponse(_page('Billing', body + '<a href="/dashboard">Back</a>'))
 
     @app.post("/billing/subscribe")
     async def subscribe(request: Request) -> RedirectResponse:
