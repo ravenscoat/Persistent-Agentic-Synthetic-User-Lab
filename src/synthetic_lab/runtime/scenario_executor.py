@@ -38,7 +38,7 @@ class RouteModel:
         self.suspicion_raised = False
 
     async def decide(self, messages: Any, decision_schema: Any = None, generation_options: Any = None) -> ModelResponse:
-        content = str(messages[-1].get("content", "")) if messages else ""
+        content = next((str(message.get("content", "")) for message in reversed(messages) if "URL: " in str(message.get("content", ""))), "")
         url = content.split("URL: ", 1)[1].split("\n", 1)[0] if "URL: " in content else ""
         if self.route.rstrip("/") not in url.rstrip("/"):
             decision = AgentDecision(kind=DecisionKind.ACTION, action=Action(id=str(uuid4()), tool_name="navigate", arguments={"url": self.route}))
