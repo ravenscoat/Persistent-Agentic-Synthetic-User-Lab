@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>Agent Observatory · Synthetic User Lab</title>
+  <link rel="stylesheet" href="/dashboard/static/dashboard.css" />
+  <style>.trace-link{font-size:10px;color:#376bce;text-decoration:none;margin-left:7px;font-weight:700}</style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">✦</div><div><strong>Agent Observatory</strong><span>synthetic user lab</span></div></div>
+      <nav><a class="nav-link active" href="#overview">⌂ <span>Overview</span></a><a class="nav-link" href="#runs">◉ <span>Agent runs</span></a><a class="nav-link" href="#activity">≋ <span>Live activity</span></a><a class="nav-link" href="#findings">✓ <span>Findings</span></a></nav>
+      <div class="sidebar-foot"><div class="system-pill"><i></i><span>Local control plane</span></div><small>Postgres authority · Qdrant memory</small></div>
+    </aside>
+    <main class="content">
+      <header class="topbar"><div><p class="eyebrow">OPERATIONS CONSOLE</p><h1>Persistent agents, visible by default.</h1><p class="subhead">Watch synthetic personas navigate, remember, and verify application behaviour.</p></div><div class="top-actions"><span id="refresh-status" class="muted">Refreshing…</span><button class="icon-button" id="refresh-button" title="Refresh">↻</button></div></header>
+      <section class="hero-grid" id="overview">
+        <div class="hero-card"><div class="hero-glow"></div><div class="eyebrow">MEMORY-AWARE TESTING</div><h2>See what every agent knows, does, and proves.</h2><p>The console joins durable events, semantic memory, browser actions, and independent verification into one operator view.</p><div class="hero-links"><a href="#runs">Inspect runs <span>→</span></a><a href="#activity">Open event stream <span>→</span></a></div></div>
+        <div class="metric-grid"><div class="metric-card"><span>Active runs</span><strong id="metric-active">—</strong><small><b class="dot blue"></b> live sessions</small></div><div class="metric-card"><span>Completed runs</span><strong id="metric-completed">—</strong><small><b class="dot green"></b> verified cycles</small></div><div class="metric-card"><span>Findings</span><strong id="metric-findings">—</strong><small><b class="dot orange"></b> evidence-backed</small></div><div class="metric-card"><span>Event health</span><strong id="metric-health">—</strong><small><b class="dot purple"></b> unique sequences</small></div></div>
+      </section>
+      <section class="panel" id="runs"><div class="panel-heading"><div><p class="eyebrow">RUN CONTROL</p><h3>Agent runs</h3></div><div class="run-create"><select id="scenario-select"><option value="trial_return">Trial return</option><option value="payment_retry">Payment retry</option><option value="ownership_transfer">Ownership transfer</option><option value="interrupted_onboarding">Interrupted onboarding</option></select><button class="primary" id="create-run">+ New run</button></div></div><div id="runs-list" class="runs-list"><div class="empty">No runs yet. Create one to start observing agents.</div></div></section>
+      <section class="detail-grid"><section class="panel activity-panel" id="activity"><div class="panel-heading"><div><p class="eyebrow">EVENT STREAM</p><h3 id="activity-title">Select a run</h3></div><span id="event-count" class="count-badge">0 events</span></div><div class="run-metrics"><span>Latency <b id="run-latency">—</b></span><span>Failures <b id="run-failures">—</b></span><span>Retries <b id="run-retries">—</b></span><span>Tools <b id="run-tools">—</b></span></div><div id="event-stream" class="event-stream"><div class="empty">Choose a run above to inspect its agent logs.</div></div></section><section class="panel" id="findings"><div class="panel-heading"><div><p class="eyebrow">VERIFICATION</p><h3>Findings & evidence</h3></div><span id="finding-count" class="count-badge">0</span></div><div id="findings-list" class="findings-list"><div class="empty">No findings for the selected run.</div></div><div class="observability-card"><div class="obs-icon">◌</div><div><strong>Langfuse traces</strong><p id="langfuse-copy">Checking observability configuration…</p><a id="langfuse-link" class="hidden" target="_blank" rel="noreferrer">Open Langfuse ↗</a></div></div></section></section>
+      <footer><span>Persistent Synthetic User Lab</span><span>API-driven · memory-scoped · independently verified</span></footer>
+    </main>
+  </div>
+  <script id="initial-runs" type="application/json"><!-- INITIAL_RUNS --></script>
+  <div hidden><!-- RUN_LINKS --></div>
+  <div id="toast-region" aria-live="polite"></div>
+  <style>#toast-region{position:fixed;right:24px;bottom:24px;z-index:20;display:grid;gap:8px}.toast{max-width:360px;padding:11px 14px;border-radius:9px;background:#132342;color:#fff;box-shadow:0 12px 30px #152b5030;font-size:11px;animation:toast-in .2s ease-out}.toast.success{background:#237c5b}.toast.error{background:#a9424c}@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}button:disabled{opacity:.6;cursor:wait}</style>
+  <script src="/dashboard/static/dashboard.js"></script>
+</body>
+</html>
