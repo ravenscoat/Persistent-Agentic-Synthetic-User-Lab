@@ -94,11 +94,13 @@ def create_app(
     async def observability_config() -> dict[str, Any]:
         """Return safe observability links; secrets are never sent to the browser."""
         from synthetic_lab.config import Settings
+        import importlib.util
 
         settings = Settings()
         host = (settings.langfuse_host or "").rstrip("/")
         return {
             "langfuse_enabled": settings.langfuse_enabled,
+            "langfuse_sdk_installed": importlib.util.find_spec("langfuse") is not None,
             "langfuse_host": host or None,
             "message": "Langfuse links appear when SUL_LANGFUSE_HOST, SUL_LANGFUSE_PUBLIC_KEY, and SUL_LANGFUSE_SECRET_KEY are configured.",
         }
