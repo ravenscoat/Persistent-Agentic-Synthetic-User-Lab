@@ -64,15 +64,16 @@ class LangfuseTracer:
         attributes = {
             "session_id": session_id,
             "user_id": persona_id,
-            "metadata": {"run_id": run_id, "persona_id": persona_id},
+            "metadata": {"run_id": run_id, "persona_id": persona_id, "component": "synthetic-user-lab"},
+            "tags": ["synthetic-user-lab", "browser-agent"],
         }
         stack = ExitStack()
         try:
             if self._propagate_attributes:
                 stack.enter_context(self._propagate_attributes(**attributes))
             span = stack.enter_context(self.client.start_as_current_observation(
-                as_type="span", name="synthetic-agent-run",
-                input={"run_id": run_id, "persona_id": persona_id}))
+                as_type="agent", name="synthetic-persona-session",
+                input={"run_id": run_id, "persona_id": persona_id, "session_id": session_id}))
         except Exception:
             span = None
         try:
@@ -84,6 +85,9 @@ class LangfuseTracer:
                 stack.close()
             except Exception:
                 pass
+            # Runs can be short-lived and the dashboard should expose their
+            # trace as soon as the durable run is complete.
+            self.flush()
 
     @contextmanager
     def generation(self, *, model: str, messages: Any) -> Iterator[Any | None]:
@@ -152,8 +156,10 @@ class TracedModelClient:
                 try:
                     decision = getattr(response, "decision", None)
                     generation.update(
+                        model=response.model_id,
                         output={"decision_kind": getattr(getattr(decision, "kind", None), "value", None)},
-                        metadata={"latency_ms": round((perf_counter() - started) * 1000, 2)},
+                        usage_details={"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens},
+                        metadata={"latency_ms": round((perf_counter() - started) * 1000, 2), "usage_estimated": response.usage.estimated},
                     )
                 except Exception:
                     pass
@@ -163,3 +169,75 @@ class TracedModelClient:
         close = getattr(self.model, "aclose", None)
         if close:
             await close()
+
+
+class TracedToolRegistry:
+    """Record safe tool metadata while dispatching each action exactly once."""
+
+    def __init__(self, registry: Any, tracer: LangfuseTracer) -> None:
+        self.registry = registry
+        self.tracer = tracer
+
+    def list_allowed(self, persona: Any) -> Any:
+        return self.registry.list_allowed(persona)
+
+    async def dispatch(self, persona: Any, action: Any) -> Any:
+        stack = ExitStack()
+        observation = None
+        if self.tracer.client:
+            try:
+                observation = stack.enter_context(self.tracer.client.start_as_current_observation(
+                    as_type="tool", name=f"browser-{action.tool_name}",
+                    input={"tool_name": action.tool_name, "action_id": action.id},
+                ))
+            except Exception:
+                observation = None
+        try:
+            result = await self.registry.dispatch(persona, action)
+            if observation is not None:
+                try:
+                    observation.update(output={"status": result.status.value, "error_code": result.error_code, "artifact_count": len(result.artifact_ids)})
+                except Exception:
+                    pass
+            return result
+        finally:
+            try:
+                stack.close()
+            except Exception:
+                pass
+
+
+class TracedContextAssembler:
+    """Record memory retrieval without exporting memory text or page content."""
+
+    def __init__(self, assembler: Any, tracer: LangfuseTracer) -> None:
+        self.assembler = assembler
+        self.tracer = tracer
+
+    def model_tools(self, persona: Any) -> Any:
+        return self.assembler.model_tools(persona)
+
+    async def build(self, persona: Any, session: Any, observation: Any, budgets: Any) -> Any:
+        stack = ExitStack()
+        retrieval = None
+        if self.tracer.client:
+            try:
+                retrieval = stack.enter_context(self.tracer.client.start_as_current_observation(
+                    as_type="retriever", name="assemble-memory-context",
+                    input={"run_id": persona.run_id, "persona_id": persona.id, "session_phase": session.phase},
+                ))
+            except Exception:
+                retrieval = None
+        try:
+            bundle = await self.assembler.build(persona, session, observation, budgets)
+            if retrieval is not None:
+                try:
+                    retrieval.update(output={"memory_ids": bundle.included_memory_ids, "memory_count": len(bundle.included_memory_ids), "context_tokens": bundle.estimated_tokens, "accounting_method": bundle.accounting_method})
+                except Exception:
+                    pass
+            return bundle
+        finally:
+            try:
+                stack.close()
+            except Exception:
+                pass

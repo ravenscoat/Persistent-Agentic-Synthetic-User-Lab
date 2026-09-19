@@ -19,7 +19,7 @@ from synthetic_lab.llm import build_local_model
 from synthetic_lab.memory.context import MemoryContextAssembler
 from synthetic_lab.storage.in_memory import InMemoryMemoryRepository
 from synthetic_lab.runtime.agent import PersonaAgent
-from synthetic_lab.observability import LangfuseTracer, TracedModelClient
+from synthetic_lab.observability import LangfuseTracer, TracedContextAssembler, TracedModelClient, TracedToolRegistry
 
 
 class SignupSmokeModel:
@@ -124,9 +124,9 @@ class DemoAgentExecutor:
             await browser.start()
             await browser.page.goto(f"{origin}/")
             observation = await browser.observe()
-            tools = BrowserToolRegistry({persona_id: browser})
             raw_model = SignupSmokeModel() if self.settings.model_name.casefold() == "smoke" else build_local_model(self.settings)
             tracer = LangfuseTracer(self.settings)
+            tools = TracedToolRegistry(BrowserToolRegistry({persona_id: browser}), tracer)
             model = TracedModelClient(raw_model, tracer)
 
             async def complete() -> bool:
@@ -134,15 +134,17 @@ class DemoAgentExecutor:
 
             agent = PersonaAgent(
                 model=model,
-                context=MemoryContextAssembler(self.memory, tool_registry=tools),
+                context=TracedContextAssembler(MemoryContextAssembler(self.memory, tool_registry=tools), tracer),
                 tools=tools,
                 state=self.state,
                 memory=self.memory,
                 budgets=BudgetConfig(max_steps=10, max_model_requests=12, output_tokens=256),
                 completion_check=complete,
             )
-            with tracer.run_trace(run.id, persona_id, session_id):
-                await agent.run(persona, session, observation)
+            with tracer.run_trace(run.id, persona_id, session_id) as trace:
+                result = await agent.run(persona, session, observation)
+                if trace is not None:
+                    trace.update(output={"status": result.status, "reason": result.reason, "steps": result.steps, "model_requests": result.model_requests})
             # Browser state is useful evidence, but a read-only artifact
             # directory must not turn a successful agent run into a failure.
             try:

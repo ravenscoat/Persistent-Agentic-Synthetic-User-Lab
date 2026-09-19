@@ -24,7 +24,7 @@ from synthetic_lab.contracts import (
 from synthetic_lab.demo import DemoStore, create_demo_app
 from synthetic_lab.demo.postgres_store import PostgresDemoStore
 from synthetic_lab.memory.context import MemoryContextAssembler
-from synthetic_lab.observability import LangfuseTracer, TracedModelClient
+from synthetic_lab.observability import LangfuseTracer, TracedContextAssembler, TracedModelClient, TracedToolRegistry
 from synthetic_lab.runtime.agent import PersonaAgent
 from synthetic_lab.runtime.demo_executor import _free_port
 from synthetic_lab.verification import DemoReplayService, DemoVerificationContext, DemoVerifier
@@ -89,8 +89,8 @@ class ScenarioExecutor:
             invariant = {"trial_return": "trial_access_seven_days", "payment_retry": "purchase_idempotency", "ownership_transfer": "ownership_transfer", "interrupted_onboarding": "onboarding_persistence", "stale_task_status": "task_completion"}.get(scenario)
             if invariant is None:
                 raise ValueError(f"unsupported scenario: {scenario}")
-            tools = BrowserToolRegistry(browsers)
             tracer = LangfuseTracer(self.settings)
+            tools = TracedToolRegistry(BrowserToolRegistry(browsers), tracer)
             sessions: dict[str, SessionRecord] = {}
             for persona_id, (persona, route) in specs.items():
                 session = SessionRecord(id=f"{persona_id}-{run.id}", run_id=run.id, persona_id=persona_id, phase=scenario, due_business_time=now)
@@ -117,7 +117,7 @@ class ScenarioExecutor:
                 browser = browsers[persona_id]
                 observation = await browser.observe()
                 model = TracedModelClient(RouteModel(route, invariant), tracer)
-                context = MemoryContextAssembler(self.memory, memory_limit=2, tool_registry=tools)
+                context = TracedContextAssembler(MemoryContextAssembler(self.memory, memory_limit=2, tool_registry=tools), tracer)
                 async def verify_suspicion(suspicion: Event) -> str:
                     requested = suspicion.payload.get("invariant_id")
                     operation = operation_id if scenario == "payment_retry" else None
@@ -134,8 +134,10 @@ class ScenarioExecutor:
                     await self.state.append_event(Event(id=str(uuid4()), run_id=run.id, persona_id=persona_id, session_id=suspicion.session_id, sequence=await self.state.reserve_event_sequences(run.id), kind="verification_completed", wall_time=datetime.now(timezone.utc), business_time=datetime.now(timezone.utc), payload={"suspicion_event_id": suspicion.id, "finding_id": finding.id if finding else None, "invariant_id": requested, "verdict": verification.verdict, "expected": verification.expected, "actual": verification.actual}))
                     return verification.verdict
                 agent = PersonaAgent(model=model, context=context, tools=tools, state=self.state, memory=self.memory, budgets=BudgetConfig(max_steps=4, max_model_requests=5, output_tokens=160), completion_check=lambda: _at_route(browser, route), suspicion_handler=verify_suspicion)
-                with tracer.run_trace(run.id, persona_id, sessions[persona_id].id):
-                    await agent.run(persona, sessions[persona_id], observation)
+                with tracer.run_trace(run.id, persona_id, sessions[persona_id].id) as trace:
+                    result = await agent.run(persona, sessions[persona_id], observation)
+                    if trace is not None:
+                        trace.update(output={"status": result.status, "reason": result.reason, "steps": result.steps, "model_requests": result.model_requests})
                 await model.aclose()
 
             await asyncio.gather(*(execute(persona_id, pair) for persona_id, pair in specs.items()))

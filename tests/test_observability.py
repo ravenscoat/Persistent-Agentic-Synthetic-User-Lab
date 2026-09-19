@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from synthetic_lab.config import Settings
-from synthetic_lab.observability import LangfuseTracer, TracedModelClient
+from synthetic_lab.observability import LangfuseTracer, TracedModelClient, TracedToolRegistry
 
 
 class BrokenExporter:
@@ -88,3 +88,22 @@ async def test_model_trace_id_is_available_to_durable_event_writer():
     model = TracedModelClient(Model(), tracer)
     await model.decide([])
     assert model.last_trace_id == "trace-123"
+
+
+@pytest.mark.asyncio
+async def test_tool_dispatch_executes_once_when_trace_teardown_fails():
+    from datetime import datetime, timezone
+    from synthetic_lab.contracts import Action, ActionStatus, ToolResult
+    class Registry:
+        calls = 0
+        async def dispatch(self, persona, action):
+            self.calls += 1
+            return ToolResult(action_id=action.id, status=ActionStatus.SUCCESS, observed_at=datetime.now(timezone.utc))
+        def list_allowed(self, persona):
+            return []
+    tracer = LangfuseTracer(Settings(_env_file=None, langfuse_host=None))
+    tracer.client = BrokenExporter()
+    registry = Registry()
+    result = await TracedToolRegistry(registry, tracer).dispatch(None, Action(id="a1", tool_name="charge"))
+    assert result.status is ActionStatus.SUCCESS
+    assert registry.calls == 1
