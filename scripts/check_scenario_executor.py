@@ -40,6 +40,7 @@ async def main() -> None:
                 "verdicts": [event.payload["verdict"] for event in verifications],
                 "findings": len(findings),
                 "status": findings[0].status.value if findings else "none",
+                "replay": [finding.replay_status.value for finding in findings],
             }
     print(results)
 
