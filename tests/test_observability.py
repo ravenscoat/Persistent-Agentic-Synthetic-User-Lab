@@ -14,6 +14,18 @@ class BrokenExporter:
         raise RuntimeError("exporter teardown failed")
 
 
+class UpdatingObservation:
+    trace_id = "trace-123"
+    def update(self, **kwargs):
+        self.updated = kwargs
+
+
+class WorkingExporter:
+    @contextmanager
+    def start_as_current_observation(self, **kwargs):
+        yield UpdatingObservation()
+
+
 @pytest.mark.parametrize("scope", ["run", "generation"])
 @pytest.mark.parametrize("application_error", [False, True])
 def test_exporter_teardown_preserves_application_outcome(scope, application_error):
@@ -61,3 +73,18 @@ async def test_failed_model_does_not_reuse_previous_trace():
     with pytest.raises(ValueError, match="model failed"):
         await model.decide([])
     assert model.last_trace_id is None
+
+
+@pytest.mark.asyncio
+async def test_model_trace_id_is_available_to_durable_event_writer():
+    from synthetic_lab.contracts import AgentDecision, DecisionKind, ModelResponse
+    class Model:
+        model_name = "test-model"
+        async def decide(self, *args, **kwargs):
+            return ModelResponse(decision=AgentDecision(kind=DecisionKind.FINISH, summary="done"), model_id=self.model_name, latency_ms=1)
+    tracer = LangfuseTracer(Settings(_env_file=None, langfuse_host=None))
+    tracer.client = WorkingExporter()
+    tracer._get_current_trace_id = lambda: "trace-123"
+    model = TracedModelClient(Model(), tracer)
+    await model.decide([])
+    assert model.last_trace_id == "trace-123"
