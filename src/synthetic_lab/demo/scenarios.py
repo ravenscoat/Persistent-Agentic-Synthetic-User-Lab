@@ -39,4 +39,12 @@ def interrupted_onboarding(store: DemoStore, account_id: str) -> InvariantResult
     return InvariantResult("onboarding_persistence", actual == 2, 2, actual, "completed onboarding progress must persist")
 
 
-SCENARIOS: dict[str, Callable[..., InvariantResult]] = {"trial_return": trial_return, "payment_retry": payment_retry, "ownership_transfer": ownership_transfer, "interrupted_onboarding": interrupted_onboarding}
+def stale_task_completion(store: DemoStore, account_id: str) -> InvariantResult:
+    store.create_project(account_id, "project-1", "Payments migration")
+    store.create_task("project-1", "task-1", "Verify payment retry")
+    store.complete_task("task-1")
+    actual = store.task_status("task-1")
+    return InvariantResult("task_completion", actual == "completed", "completed", actual, "completed task must remain completed")
+
+
+SCENARIOS: dict[str, Callable[..., InvariantResult]] = {"trial_return": trial_return, "payment_retry": payment_retry, "ownership_transfer": ownership_transfer, "interrupted_onboarding": interrupted_onboarding, "stale_task_status": stale_task_completion}

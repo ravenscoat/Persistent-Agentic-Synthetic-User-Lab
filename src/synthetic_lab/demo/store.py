@@ -146,3 +146,15 @@ class DemoStore:
     def notifications(self, account_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute("SELECT id,message,read,created_at FROM notifications WHERE account_id = ? ORDER BY created_at DESC", (account_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def invoices(self, account_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute("SELECT id,operation_id,amount_cents,created_at FROM ledger WHERE account_id = ? ORDER BY created_at DESC, id DESC", (account_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def memberships(self, account_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute("SELECT member_id,role FROM memberships WHERE account_id = ? ORDER BY member_id", (account_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def invitations(self, account_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute("SELECT id,email,status,created_at FROM invitations WHERE account_id = ? ORDER BY created_at DESC", (account_id,)).fetchall()
+        return [dict(row) for row in rows]

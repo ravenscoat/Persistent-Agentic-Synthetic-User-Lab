@@ -187,3 +187,24 @@ class PostgresDemoStore:
                 cursor.execute("SELECT id,message,read,created_at FROM sul_demo_notifications WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
                 rows = cursor.fetchall()
         return [dict(zip(("id", "message", "read", "created_at"), row)) for row in rows]
+
+    def invoices(self, account_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id,operation_id,amount_cents,created_at FROM sul_demo_invoices WHERE account_id=%s ORDER BY created_at DESC,id DESC", (account_id,))
+                rows = cursor.fetchall()
+        return [dict(zip(("id", "operation_id", "amount_cents", "created_at"), row)) for row in rows]
+
+    def memberships(self, account_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT member_id,role FROM sul_demo_memberships WHERE account_id=%s ORDER BY member_id", (account_id,))
+                rows = cursor.fetchall()
+        return [dict(zip(("member_id", "role"), row)) for row in rows]
+
+    def invitations(self, account_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id,email,status,created_at FROM sul_demo_invitations WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+                rows = cursor.fetchall()
+        return [dict(zip(("id", "email", "status", "created_at"), row)) for row in rows]

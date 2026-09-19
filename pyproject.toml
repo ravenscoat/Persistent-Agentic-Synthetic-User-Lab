@@ -27,6 +27,7 @@ postgres = ["psycopg[binary]>=3.2,<4"]
 model = ["ollama>=0.4,<1"]
 embeddings = ["sentence-transformers>=3,<4"]
 qdrant = ["qdrant-client>=1.12,<2"]
+observability = ["langfuse>=4,<5"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -34,3 +35,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+synthetic_lab = ["api/static/*.html", "api/static/*.css", "api/static/*.js"]

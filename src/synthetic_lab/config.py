@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     qdrant_collection: str = "sul_memory"
     postgres_dsn: str | None = None
     business_fault: str | None = None
+    langfuse_host: str | None = None
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        return bool(self.langfuse_host and self.langfuse_public_key and self.langfuse_secret_key)
 
     def ensure_artifact_root(self) -> Path:
         self.artifact_root.mkdir(parents=True, exist_ok=True)

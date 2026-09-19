@@ -4,7 +4,7 @@ from synthetic_lab.demo.scenarios import SCENARIOS
 from synthetic_lab.demo.store import DemoStore
 from synthetic_lab.verification.invariants import DemoVerificationContext, DemoVerifier
 
-FAULTS = {"trial_return": (None, "trial_expires_day_5"), "payment_retry": (None, "duplicate_charge"), "ownership_transfer": (None, "owner_transfer_leak"), "interrupted_onboarding": (None, "onboarding_resets")}
+FAULTS = {"trial_return": (None, "trial_expires_day_5"), "payment_retry": (None, "duplicate_charge"), "ownership_transfer": (None, "owner_transfer_leak"), "interrupted_onboarding": (None, "onboarding_resets"), "stale_task_status": (None, "task_completion_stale")}
 
 
 async def run_case(scenario_id: str, fault: str | None) -> dict[str, object]:

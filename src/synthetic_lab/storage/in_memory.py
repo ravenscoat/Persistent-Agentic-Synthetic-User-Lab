@@ -48,6 +48,15 @@ class InMemoryStateRepository:
             except KeyError as exc:
                 raise KeyError(f"unknown run: {run_id}") from exc
 
+    async def list_runs(self, limit: int = 100) -> list[RunRecord]:
+        async with self._lock:
+            values = sorted(self.runs.values(), key=lambda item: item.created_at, reverse=True)
+            return copy.deepcopy(values[: max(0, limit)])
+
+    async def list_findings(self, run_id: str) -> list[Finding]:
+        async with self._lock:
+            return copy.deepcopy([item for item in self.findings.values() if item.run_id == run_id])
+
     async def transition_run(self, run_id: str, status: RunStatus | str) -> RunRecord:
         async with self._lock:
             run = self.runs[run_id]

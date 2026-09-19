@@ -32,7 +32,7 @@ class AgentRunResult:
 class PersonaAgent:
     """Executes one persona session with hard budgets and durable checkpoints."""
 
-    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None, completion_check: Any | None = None) -> None:
+    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None, completion_check: Any | None = None, suspicion_handler: Any | None = None) -> None:
         self.model = model
         self.context = context
         self.tools = tools
@@ -41,6 +41,7 @@ class PersonaAgent:
         self.budgets = budgets
         self.clock = clock
         self.completion_check = completion_check
+        self.suspicion_handler = suspicion_handler
 
     async def run(
         self,
@@ -87,6 +88,21 @@ class PersonaAgent:
                 await self.state.checkpoint_step(current.id, await self._new_event(current, "session_failed", {"reason": "model_unavailable"}), failed)
                 return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
             decision: AgentDecision = response.decision
+            trace_id = getattr(self.model, "last_trace_id", None)
+            if decision.kind.value == "suspicion":
+                steps += 1
+                current = current.model_copy(update={"step_count": steps})
+                suspicion = await self._new_event(current, "agent_suspicion", {
+                    "invariant_id": decision.invariant_id, "summary": decision.summary,
+                    "observation": observation.model_dump(mode="json"),
+                    "retrieved_memory_ids": bundle.included_memory_ids,
+                })
+                await self.state.checkpoint_step(current.id, suspicion, current)
+                if self.suspicion_handler is None:
+                    return await self._fail(current, observation, steps, requests, "verification_unavailable")
+                verdict = await self.suspicion_handler(suspicion)
+                feedback = f"Independent verification returned: {verdict}. Continue the task or finish; do not repeat this suspicion."
+                continue
             if decision.kind.value == "finish":
                 if self.completion_check and not await self.completion_check():
                     corrections += 1
@@ -95,7 +111,10 @@ class PersonaAgent:
                     feedback = f"Completion check failed. You are still at {observation.url}. Filling fields does not submit the form. If required fields are filled, choose the submit button. Return an action decision until the requested destination is visible."
                     continue
                 completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
-                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids, "context_tokens": bundle.estimated_tokens}), completed)
+                finished_payload = {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids, "context_tokens": bundle.estimated_tokens}
+                if trace_id:
+                    finished_payload["langfuse_trace_id"] = trace_id
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", finished_payload), completed)
                 return AgentRunResult("completed", decision.summary or "finished", steps, requests, observation.id)
             if decision.kind.value == "blocked":
                 failed = current.model_copy(update={"status": SessionStatus.FAILED, "step_count": steps})
@@ -167,6 +186,8 @@ class PersonaAgent:
                     "model_latency_ms": response.latency_ms,
                 },
             )
+            if trace_id:
+                event.payload["langfuse_trace_id"] = trace_id
             next_status = SessionStatus.RUNNING if result.status.value == "success" else SessionStatus.WAITING
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)

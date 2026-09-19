@@ -34,4 +34,7 @@ class DemoVerifier:
         if invariant_id == "onboarding_persistence":
             actual = store.account(verification_context.account_id)["onboarding_step"]
             return VerificationResult(verdict="satisfied" if actual == 2 else "confirmed", expected=2, actual=actual, evidence_ids=[])
+        if invariant_id == "task_completion":
+            actual = store.task_status("task-1")
+            return VerificationResult(verdict="satisfied" if actual == "completed" else "confirmed", expected="completed", actual=actual, evidence_ids=[])
         return VerificationResult(verdict="inconclusive", expected=None, actual=None, evidence_ids=[])

@@ -67,6 +67,14 @@ class PostgresStateRepository:
         row = rows[0]
         return RunRecord(id=row[0], scenario_id=row[1], status=RunStatus(row[2]), created_at=row[3], business_time=row[4], config_snapshot=row[5] or {}, model_metadata=row[6] or {})
 
+    async def list_runs(self, limit: int = 100) -> list[RunRecord]:
+        rows = await self._read("SELECT id,scenario_id,status,created_at,business_time,config_snapshot,model_metadata FROM sul_runs ORDER BY created_at DESC LIMIT %s", (max(0, limit),))
+        return [RunRecord(id=row[0], scenario_id=row[1], status=RunStatus(row[2]), created_at=row[3], business_time=row[4], config_snapshot=row[5] or {}, model_metadata=row[6] or {}) for row in rows]
+
+    async def list_findings(self, run_id: str) -> list[Finding]:
+        rows = await self._read("SELECT id,run_id,session_id,invariant_id,status,expected,actual,evidence_ids,verifier_version,replay_status FROM sul_findings WHERE run_id=%s ORDER BY id", (run_id,))
+        return [_finding(row) for row in rows]
+
     async def transition_run(self, run_id: str, status: RunStatus | str) -> RunRecord:
         run = await self.get_run(run_id)
         target = RunStatus(status)
@@ -206,6 +214,11 @@ class PostgresStateRepository:
 
 def _session(row: Sequence[Any]) -> SessionRecord:
     return SessionRecord(id=row[0], run_id=row[1], persona_id=row[2], status=SessionStatus(row[3]), phase=row[4], due_business_time=row[5], lease_owner=row[6], lease_expires_at=row[7], step_count=row[8])
+
+
+def _finding(row: Sequence[Any]) -> Finding:
+    from synthetic_lab.contracts import FindingStatus, ReplayStatus
+    return Finding(id=row[0], run_id=row[1], session_id=row[2], invariant_id=row[3], status=FindingStatus(row[4]), expected=row[5], actual=row[6], evidence_ids=row[7] or [], verifier_version=row[8], replay_status=ReplayStatus(row[9]))
 
 
 def _insert_event(cursor: Any, event: Event) -> None:

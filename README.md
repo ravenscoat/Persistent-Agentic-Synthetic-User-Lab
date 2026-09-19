@@ -43,6 +43,10 @@ Agent state and memory also use PostgreSQL during scripts/run_e2e.py runs
 when this variable is set. See [restart recovery](docs/restart-recovery.md) for
 the crash-and-resume proof.
 
+To verify the live API repository path across two API instances, run:
+
+    .\.venv\Scripts\python.exe scripts\check_postgres_live.py
+
 ## Run locally
 
 Create the environment and install the test dependencies:
@@ -74,6 +78,18 @@ Run tests and the deterministic scenario evaluation:
 The evaluation executes each scenario once against healthy state and once with
 its seeded fault. The independent verifier must report `satisfied` for healthy
 state and `confirmed` for the fault. See [docs/evaluation.md](docs/evaluation.md).
+
+Run the real browser suspicion-to-verifier matrix and the Qwen memory ablation:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_scenario_executor.py
+.\.venv\Scripts\python.exe scripts\evaluate_memory.py --real-model --trials 3 --output outputs\memory-ablation-qwen.json
+```
+
+The browser matrix persists the agent suspicion before verification and links
+the verifier result to that event. The Qwen report compares memory on/off and
+records completion, bug discovery, false positives, model latency, and the
+input/output token counts reported by Ollama.
 
 For the concurrent two-browser Qwen proof, see
 [docs/two-persona-transfer.md](docs/two-persona-transfer.md). It demonstrates

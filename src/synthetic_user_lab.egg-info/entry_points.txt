@@ -1,0 +1,2 @@
+[console_scripts]
+sul-evaluate = synthetic_lab.evaluation.cli:main

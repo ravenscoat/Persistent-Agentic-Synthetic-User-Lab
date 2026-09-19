@@ -73,7 +73,7 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         <form method="post" action="/purchase"><input name="operation_id" value="purchase-1"><input name="amount_cents" type="number" value="2500"><button type="submit">Purchase</button></form>
         <form method="post" action="/onboarding"><input name="step" type="number" value="2"><button type="submit">Save onboarding</button></form>
         <form method="post" action="/transfer"><input name="new_member" value="new-owner"><button type="submit">Transfer ownership</button></form>'''
-        body += '<p><a href="/projects">Projects</a> | <a href="/tasks">Tasks</a> | <a href="/billing">Billing</a> | <a href="/notifications">Notifications</a></p>'
+        body += '<p><a href="/projects">Projects</a> | <a href="/tasks">Tasks</a> | <a href="/team">Team and permissions</a> | <a href="/billing">Billing</a> | <a href="/invoices">Invoices</a> | <a href="/notifications">Notifications</a></p>'
         return HTMLResponse(_page("Account dashboard", body))
 
     @app.post("/purchase")
@@ -106,11 +106,27 @@ def create_demo_app(store: DemoStore | PostgresDemoStore | None = None) -> FastA
         business.invite(account_id(request), f"invite-{uuid4().hex[:8]}", email)
         return RedirectResponse("/dashboard", status_code=303)
 
+    @app.get("/team", response_class=HTMLResponse)
+    async def team(request: Request) -> HTMLResponse:
+        current_id = account_id(request)
+        members = business.memberships(current_id)
+        invitations = business.invitations(current_id)
+        member_text = "".join(f"<li>{item['member_id']}: {item['role']}</li>" for item in members) or "<li>No members</li>"
+        invite_text = "".join(f"<li>{item['email']}: {item['status']}</li>" for item in invitations) or "<li>No invitations</li>"
+        body = f"<h2>Members</h2><ul>{member_text}</ul><h2>Invitations</h2><ul>{invite_text}</ul><form method='post' action='/invitations'><input name='email' type='email' required><button>Invite teammate</button></form><a href='/dashboard'>Back</a>"
+        return HTMLResponse(_page("Team and permissions", body))
+
     @app.get("/notifications", response_class=HTMLResponse)
     async def notifications(request: Request) -> HTMLResponse:
         values = business.notifications(account_id(request))
         body = "".join(f"<li>{item['message']}</li>" for item in values) or "<li>No notifications</li>"
         return HTMLResponse(_page("Notifications", f"<ul>{body}</ul><a href='/dashboard'>Back</a>"))
+
+    @app.get("/invoices", response_class=HTMLResponse)
+    async def invoices(request: Request) -> HTMLResponse:
+        values = business.invoices(account_id(request))
+        body = "".join(f"<li>{item['operation_id']}: {item['amount_cents']} cents</li>" for item in values) or "<li>No invoices</li>"
+        return HTMLResponse(_page("Invoices", f"<ul>{body}</ul><a href='/billing'>Back</a>"))
 
     @app.get("/tasks", response_class=HTMLResponse)
     async def tasks(request: Request) -> HTMLResponse:

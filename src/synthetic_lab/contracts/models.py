@@ -30,6 +30,7 @@ class SessionStatus(StrEnum):
 
 
 class DecisionKind(StrEnum):
+    SUSPICION = "suspicion"
     ACTION = "action"
     MEMORY_QUERY = "memory_query"
     FINISH = "finish"
@@ -142,9 +143,14 @@ class AgentDecision(StrictModel):
     action: Action | None = None
     query: str | None = None
     summary: str | None = None
+    invariant_id: str | None = None
 
     @model_validator(mode="after")
     def validate_shape(self) -> "AgentDecision":
+        if self.kind is DecisionKind.SUSPICION and (not self.invariant_id or not self.summary):
+            raise ValueError("suspicion requires invariant_id and summary")
+        if self.kind is not DecisionKind.SUSPICION and self.invariant_id is not None:
+            raise ValueError("only suspicion decisions may contain invariant_id")
         if self.kind is DecisionKind.ACTION and self.action is None:
             raise ValueError("action decision requires action")
         if self.kind is not DecisionKind.ACTION and self.action is not None:

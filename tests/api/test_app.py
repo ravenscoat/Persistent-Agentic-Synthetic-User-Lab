@@ -2,6 +2,10 @@ from fastapi.testclient import TestClient
 
 from synthetic_lab.api import create_app
 from synthetic_lab.storage import InMemoryStateRepository
+from synthetic_lab.contracts import RunRecord, RunStatus
+from datetime import datetime, timezone
+import asyncio
+import time
 
 
 def test_run_lifecycle_and_event_cursor() -> None:
@@ -53,3 +57,38 @@ def test_run_listing_and_terminal_transition_guard() -> None:
     assert client.post(f"/api/runs/{run_id}/cancel").status_code == 200
     response = client.post(f"/api/runs/{run_id}/resume")
     assert response.status_code == 409
+
+
+def test_start_can_launch_observable_background_executor() -> None:
+    async def executor(run) -> None:
+        await asyncio.sleep(0.01)
+
+    with TestClient(create_app(executor=executor)) as client:
+        run_id = client.post("/api/runs", json={"scenario_id": "trial_return"}).json()["id"]
+        response = client.post(f"/api/runs/{run_id}/start")
+        assert response.status_code == 200
+        assert response.json()["execution"]["state"] in {"queued", "running"}
+        for _ in range(20):
+            status = client.get(f"/api/runs/{run_id}/execution").json()
+            if status["state"] == "completed":
+                break
+            time.sleep(0.01)
+        assert client.get(f"/api/runs/{run_id}").json()["status"] == "COMPLETED"
+
+
+def test_startup_rehydrates_running_runs() -> None:
+    state = InMemoryStateRepository()
+    now = datetime.now(timezone.utc)
+    run = RunRecord(id="recovery-run", scenario_id="recovery", created_at=now, business_time=now, status=RunStatus.RUNNING)
+    asyncio.run(state.create_run(run))
+    called: list[str] = []
+
+    async def executor(recovered) -> None:
+        called.append(recovered.id)
+
+    with TestClient(create_app(state, executor=executor)) as client:
+        for _ in range(20):
+            if client.get(f"/api/runs/{run.id}").json()["status"] == "COMPLETED":
+                break
+            time.sleep(0.01)
+    assert called == [run.id]

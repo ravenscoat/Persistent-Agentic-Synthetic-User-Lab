@@ -69,6 +69,33 @@ async def test_agent_checkpoints_tool_and_finish() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_suspicion_is_checkpointed_before_verification() -> None:
+    now = datetime.now(timezone.utc)
+    state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
+    await state.create_run(RunRecord(id="suspect-run", scenario_id="trial_return", created_at=now, business_time=now))
+    session = SessionRecord(id="suspect-session", run_id="suspect-run", persona_id="p", phase="return", due_business_time=now)
+    await state.enqueue_session(session)
+    persona = PersonaRecord(id="p", run_id="suspect-run", kind="returning", goal="check trial", application_account_id="a")
+    observation = Observation(id="o", run_id="suspect-run", session_id=session.id, url="http://demo/dashboard", visible_text="Trial active: false", captured_at=now)
+    decisions = [
+        AgentDecision(kind=DecisionKind.SUSPICION, invariant_id="trial_access_seven_days", summary="Trial appears inactive on day six."),
+        AgentDecision(kind=DecisionKind.FINISH, summary="verification complete"),
+    ]
+    handled = []
+    async def verify(event):
+        handled.append(event)
+        assert event.kind == "agent_suspicion"
+        assert event.payload["observation"]["visible_text"] == "Trial active: false"
+        return "confirmed"
+    agent = PersonaAgent(model=ScriptedModel(decisions), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=3), suspicion_handler=verify)
+    result = await agent.run(persona, session, observation)
+    assert result.status == "completed"
+    assert len(handled) == 1
+    events = await state.list_events("suspect-run")
+    assert [event.kind for event in events] == ["session_started", "agent_suspicion", "session_finished"]
+
+
+@pytest.mark.asyncio
 async def test_agent_stops_at_step_budget() -> None:
     now = datetime.now(timezone.utc)
     state = InMemoryStateRepository()

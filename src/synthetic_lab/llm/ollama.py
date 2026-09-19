@@ -116,7 +116,8 @@ class OllamaModelClient:
                     "Return exactly one JSON object matching the required decision schema. "
                     "Do not include markdown or explanation. If kind is finish or blocked, "
                     "include a non-empty summary string. If kind is memory_query, include a "
-                    "non-empty query string. If kind is action, include an action object."
+                    "non-empty query string. If kind is suspicion, include invariant_id and a "
+                    "non-empty summary. If kind is action, include an action object."
                 ),
             }
             return await self.decide([*messages, repair], decision_schema, generation_options)
