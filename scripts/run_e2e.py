@@ -163,7 +163,9 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
     else:
         state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
     app = create_demo_app(store)
-    config = uvicorn.Config(app, host="127.0.0.1", port=8011, log_level="error")
+    port = int(os.environ.get("SUL_E2E_PORT", "8011"))
+    origin = f"http://127.0.0.1:{port}"
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     await asyncio.sleep(0.3)
@@ -172,10 +174,10 @@ async def main(real_model: bool = False, workflow: bool = False) -> int:
     session = SessionRecord(id=session_id, run_id=run_id, persona_id="smoke-persona", phase="signup", due_business_time=now)
     await state.enqueue_session(session)
     persona = PersonaRecord(id="smoke-persona", run_id=run_id, kind="new_customer", goal="Create an account using email smoke@example.test and password not-a-real-password. Fill empty required fields, then submit. Once the Account dashboard at /dashboard is visible, return kind=finish with a summary. Do not purchase, transfer ownership, or start another workflow.", application_account_id="account-1", allowed_tool_names=["observe_page", "navigate", "click", "fill"])
-    browser = PlaywrightBrowserSession(run_id, session_id, "http://127.0.0.1:8011", artifact_root="artifacts")
+    browser = PlaywrightBrowserSession(run_id, session_id, origin, artifact_root="artifacts")
     await browser.start()
     try:
-        await browser.page.goto("http://127.0.0.1:8011/")
+        await browser.page.goto(origin + "/")
         observation = await browser.observe()
         tools = BrowserToolRegistry({persona.id: browser})
         model = build_local_model(settings) if real_model else (WorkflowModel() if workflow else SmokeModel())

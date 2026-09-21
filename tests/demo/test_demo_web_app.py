@@ -3,6 +3,26 @@ from fastapi.testclient import TestClient
 from synthetic_lab.demo import DemoStore, create_demo_app
 
 
+def test_billing_matches_verifier_for_dynamic_account_and_excludes_other_accounts():
+    store = DemoStore(fault="duplicate_charge")
+    try:
+        store.create_account("dynamic-account", "dynamic@test.invalid", "test")
+        store.create_account("other-account", "other@test.invalid", "test")
+        store.purchase("dynamic-account", "dynamic-operation", 2500)
+        store.purchase("other-account", "other-operation", 9000)
+        with TestClient(create_demo_app(store)) as client:
+            client.cookies.set("account_id", "dynamic-account")
+            page = client.get("/billing").text
+        result = store.ledger_for("dynamic-operation")
+        assert result.charges == 2
+        assert "Charges: 2; total cents: 5000" in page
+        assert page.count("Operation dynamic-operation:") == 2
+        assert "other-operation" not in page
+        assert "Charge account" not in page
+    finally:
+        store.close()
+
+
 def test_demo_app_creates_account_and_preserves_workflow_state() -> None:
     store = DemoStore()
     client = TestClient(create_demo_app(store))

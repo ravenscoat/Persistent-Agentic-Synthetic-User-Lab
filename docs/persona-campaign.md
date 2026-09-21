@@ -8,7 +8,7 @@ With PostgreSQL configured in `SUL_POSTGRES_DSN` and local Ollama serving
 ```
 
 The campaign runs trial return, billing inspection, former-owner access, and
-onboarding inspection against healthy and faulty state: eight cases in total.
+onboarding and task-workflow inspection against healthy and faulty state: ten cases in total.
 Each case has a separate PostgreSQL schema and browser context, and runs through
 the scheduler and Qwen agent loop. Model requests are serialized. This runner
 does not put four personas into one shared run.
@@ -28,7 +28,7 @@ remaining cases continue. Findings and their replay statuses are persisted in
 PostgreSQL and individual JSON evidence reports. Evaluation schemas are retained.
 
 On 2026-09-18, the corrected runner completed all eight real-Qwen cases:
-four healthy checks satisfied their invariants, four faults were confirmed,
+five healthy checks must satisfy their invariants and five faults must be confirmed,
 and all four fault replays reproduced. Every agent completed its return visit.
 This is one local campaign, not a reliability-rate estimate.
 

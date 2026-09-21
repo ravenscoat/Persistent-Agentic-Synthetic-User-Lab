@@ -49,6 +49,14 @@ PERSONA_SCENARIOS: tuple[PersonaScenario, ...] = (
         return_route="/dashboard",
         goal="Return after completing onboarding and inspect the persisted onboarding step on the dashboard. Finish only after the dashboard is visible.",
     ),
+    PersonaScenario(
+        scenario_id="stale_task_status",
+        persona_kind="project_contributor",
+        fault="task_completion_stale",
+        invariant_id="task_completion",
+        return_route="/tasks",
+        goal="Return after completing a task and inspect whether task-1 is shown as completed on the Tasks page.",
+    ),
 )
 
 

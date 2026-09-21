@@ -30,6 +30,7 @@ class LangfuseTracer:
 
     def __init__(self, settings: Settings) -> None:
         self.client: Any | None = None
+        self.environment = settings.langfuse_environment
         self._propagate_attributes: Any | None = None
         self._get_current_trace_id: Any | None = None
         if not settings.langfuse_enabled:
@@ -66,6 +67,7 @@ class LangfuseTracer:
             "user_id": persona_id,
             "metadata": {"run_id": run_id, "persona_id": persona_id, "component": "synthetic-user-lab"},
             "tags": ["synthetic-user-lab", "browser-agent"],
+            "environment": self.environment,
         }
         stack = ExitStack()
         try:

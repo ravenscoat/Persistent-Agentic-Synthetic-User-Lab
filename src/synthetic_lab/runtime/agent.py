@@ -32,7 +32,7 @@ class AgentRunResult:
 class PersonaAgent:
     """Executes one persona session with hard budgets and durable checkpoints."""
 
-    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None, completion_check: Any | None = None, suspicion_handler: Any | None = None) -> None:
+    def __init__(self, *, model: Any, context: MemoryContextAssembler, tools: Any, state: Any, memory: Any, budgets: Any, clock: Any | None = None, completion_check: Any | None = None, suspicion_handler: Any | None = None, decision_schema: dict[str, Any] | None = None, finish_after_verification: bool = False, after_action_checkpoint: Any | None = None) -> None:
         self.model = model
         self.context = context
         self.tools = tools
@@ -42,6 +42,12 @@ class PersonaAgent:
         self.clock = clock
         self.completion_check = completion_check
         self.suspicion_handler = suspicion_handler
+        self.decision_schema = decision_schema
+        self.finish_after_verification = finish_after_verification
+        # Used by browser executors to persist replayable browser state only
+        # after the action's database checkpoint and memory record succeed.
+        self.after_action_checkpoint = after_action_checkpoint
+        self.stop_on_completion = False
 
     async def run(
         self,
@@ -61,23 +67,40 @@ class PersonaAgent:
             raise ValueError("stop_after_steps must be greater than the persisted step count")
         steps = session.step_count
         requests = 0
+        input_tokens = 0
+        output_tokens = 0
         feedback = ""
         corrections = 0
         last_fill = None
         last_click = None
+        # Keep execution progress outside similarity retrieval: older successful
+        # submissions must not disappear when unrelated memories rank higher.
+        progress = []
+        if session.step_count:
+            for event in await self.state.list_events(persona.run_id, limit=1000):
+                if event.session_id == session.id and event.kind == "tool_result" and event.payload.get("status") == "success":
+                    progress.append(f"{event.payload.get('tool_name')} on {event.payload.get('target_name')!r}")
         current = session.model_copy(update={"status": SessionStatus.RUNNING})
         if steps == 0:
             await self.state.append_event(await self._new_event(current, "session_started", {"phase": current.phase}))
         while steps < self.budgets.max_steps and requests < self.budgets.max_model_requests:
+            if self.stop_on_completion and steps and self.completion_check and await self.completion_check():
+                completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
+                await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", {"summary": "Required actions and final check passed."}), completed)
+                return AgentRunResult("completed", "verified_completion", steps, requests, observation.id)
             bundle = await self.context.build(persona, current, observation, self.budgets)
+            if progress:
+                bundle.messages.append({"role": "user", "content": "Successful actions in order (no field values): " + "; ".join(progress[-40:]) + ". Compare these with the requested goal and do the earliest unfinished step. Opening a page or filling a field does not create or submit anything. Do not restart completed steps."})
             if feedback:
                 bundle.messages.append({"role": "user", "content": feedback})
             try:
                 if hasattr(self.model, "decide_with_repair"):
-                    response = await self.model.decide_with_repair(bundle.messages, generation_options={"num_predict": self.budgets.output_tokens})
+                    response = await self.model.decide_with_repair(bundle.messages, decision_schema=self.decision_schema, generation_options={"num_predict": self.budgets.output_tokens})
                 else:
-                    response = await self.model.decide(bundle.messages, generation_options={"num_predict": self.budgets.output_tokens})
+                    response = await self.model.decide(bundle.messages, decision_schema=self.decision_schema, generation_options={"num_predict": self.budgets.output_tokens})
                 requests += 1
+                input_tokens += response.usage.input_tokens
+                output_tokens += response.usage.output_tokens
             except Exception as exc:
                 failed = current.model_copy(update={"status": SessionStatus.FAILED})
                 await self.state.append_event(await self._new_event(
@@ -88,6 +111,7 @@ class PersonaAgent:
                 await self.state.checkpoint_step(current.id, await self._new_event(current, "session_failed", {"reason": "model_unavailable"}), failed)
                 return AgentRunResult("failed", "model_unavailable", steps, requests, observation.id)
             decision: AgentDecision = response.decision
+            verified_terminal = False
             trace_id = getattr(self.model, "last_trace_id", None)
             if decision.kind.value == "suspicion":
                 steps += 1
@@ -102,16 +126,27 @@ class PersonaAgent:
                     return await self._fail(current, observation, steps, requests, "verification_unavailable")
                 verdict = await self.suspicion_handler(suspicion)
                 feedback = f"Independent verification returned: {verdict}. Continue the task or finish; do not repeat this suspicion."
-                continue
+                # Single-invariant scenarios end on independent evidence, without
+                # asking the model to decide whether to repeat a verified finding.
+                # A failed invariant is itself a complete, independently
+                # verified finding. A satisfied invariant still needs the
+                # normal completion check before ending the journey.
+                verified_failure = verdict == "confirmed"
+                verified_success = verdict == "satisfied" and self.completion_check is not None and await self.completion_check()
+                if self.finish_after_verification and (verified_failure or verified_success):
+                    verified_terminal = True
+                    decision = AgentDecision(kind="finish", summary=f"Independent verification of {decision.invariant_id}: {verdict}.")
+                else:
+                    continue
             if decision.kind.value == "finish":
-                if self.completion_check and not await self.completion_check():
+                if not verified_terminal and self.completion_check and not await self.completion_check():
                     corrections += 1
                     if corrections > 2:
                         return await self._fail(current, observation, steps, requests, "progress_repair_exhausted")
                     feedback = f"Completion check failed. You are still at {observation.url}. Filling fields does not submit the form. If required fields are filled, choose the submit button. Return an action decision until the requested destination is visible."
                     continue
                 completed = current.model_copy(update={"status": SessionStatus.COMPLETED, "step_count": steps})
-                finished_payload = {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids, "context_tokens": bundle.estimated_tokens}
+                finished_payload = {"summary": decision.summary, "retrieved_memory_ids": bundle.included_memory_ids, "context_tokens": bundle.estimated_tokens, "input_tokens": input_tokens, "output_tokens": output_tokens}
                 if trace_id:
                     finished_payload["langfuse_trace_id"] = trace_id
                 await self.state.checkpoint_step(current.id, await self._new_event(current, "session_finished", finished_payload), completed)
@@ -167,6 +202,8 @@ class PersonaAgent:
             last_fill = signature if action.tool_name == "fill" and result.status.value == "success" else None
             last_click = click_signature if action.tool_name == "click" and result.status.value == "success" else None
             target_name = target_element.name if target_element else action.tool_name
+            if result.status.value == "success":
+                progress.append(f"{action.tool_name} on {target_name!r}")
             steps += 1
             event = await self._new_event(
                 current,
@@ -184,6 +221,10 @@ class PersonaAgent:
                     "context_tokens": bundle.estimated_tokens,
                     "context_accounting_method": bundle.accounting_method,
                     "model_latency_ms": response.latency_ms,
+                    "model_id": response.model_id,
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "usage_estimated": response.usage.estimated,
                 },
             )
             if trace_id:
@@ -192,6 +233,8 @@ class PersonaAgent:
             current = current.model_copy(update={"status": next_status, "step_count": steps})
             await self.state.checkpoint_step(current.id, event, current)
             await self._write_memory(persona, current, MemoryType.TOOL_LOG, f"Step {steps}: {action.tool_name} on {target_name!r}: {result.status.value}. Use the CURRENT observation for field state and targets.", event.sequence)
+            if self.after_action_checkpoint is not None and result.status.value == "success":
+                await self.after_action_checkpoint(current, event)
             if stop_after_steps is not None and steps >= stop_after_steps:
                 return AgentRunResult("interrupted", "simulated_crash", steps, requests, observation.id)
             if isinstance(result.data, dict) and result.data.get("id") and result.data.get("url"):

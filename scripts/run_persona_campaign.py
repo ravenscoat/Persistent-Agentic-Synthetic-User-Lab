@@ -1,4 +1,4 @@
-"""Run the four returned-persona scenarios with Qwen and healthy/fault controls."""
+"""Run the returned-persona scenario matrix with Qwen and healthy/fault controls."""
 from __future__ import annotations
 
 import argparse
@@ -72,6 +72,10 @@ async def run_case(spec: PersonaScenario, fault: str | None, settings: Settings)
             member_id = "old-owner"; store.transfer_owner(account_id, "old-owner", "new-owner")
         elif spec.scenario_id == "interrupted_onboarding":
             store.set_onboarding_step(account_id, 2)
+        elif spec.scenario_id == "stale_task_status":
+            store.create_project(account_id, "project-1", "Payments migration")
+            store.create_task("project-1", "task-1", "Verify payment retry")
+            store.complete_task("task-1")
         task = asyncio.create_task(server.serve()); await asyncio.sleep(.25)
         persona = PersonaRecord(id=member_id, run_id=run_id, kind=spec.persona_kind, application_account_id=account_id, goal=spec.goal, allowed_tool_names=["navigate"])
         session = SessionRecord(id=f"{spec.persona_kind}-return", run_id=run_id, persona_id=member_id, phase="return", due_business_time=now)
@@ -125,7 +129,8 @@ async def main() -> int:
     output_path = Path(__file__).resolve().parents[1] / "artifacts" / "persona-campaign.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     def save(complete=False):
-        payload = {"model": "qwen", "rows": rows, "complete": complete, "passed": complete and len(rows) == 8 and all(case_passed(row) for row in rows)}
+        expected_rows = len(PERSONA_SCENARIOS) * 2
+        payload = {"model": "qwen", "rows": rows, "complete": complete, "passed": complete and len(rows) == expected_rows and all(case_passed(row) for row in rows)}
         output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return payload
     save()
@@ -138,7 +143,7 @@ async def main() -> int:
                 row = {"scenario": spec.scenario_id, "fault": fault, "error_type": type(exc).__name__}
             rows.append(row)
             save()
-            print(f"Finished {len(rows)}/8: {'passed' if case_passed(row) else 'failed'}", file=sys.stderr, flush=True)
+            print(f"Finished {len(rows)}/{len(PERSONA_SCENARIOS) * 2}: {'passed' if case_passed(row) else 'failed'}", file=sys.stderr, flush=True)
     output = save(complete=True)
     print(json.dumps(output, indent=2, default=str))
     return 0 if output["passed"] else 1

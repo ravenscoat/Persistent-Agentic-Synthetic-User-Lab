@@ -7,6 +7,19 @@ import pytest
 from synthetic_lab.contracts import DecisionKind
 from synthetic_lab.llm.ollama import InvalidModelOutput, ModelUnavailable, OllamaModelClient
 from synthetic_lab.llm.router import FallbackModelClient
+from synthetic_lab.llm.ollama import constrained_decision_schema
+from synthetic_lab.contracts import AgentDecision
+
+
+def test_generation_schema_requires_suspicion_evidence_and_preserves_invariant():
+    schema = AgentDecision.model_json_schema()
+    schema["properties"]["invariant_id"] = {"anyOf": [{"const": "purchase_idempotency"}, {"type": "null"}]}
+    branches = constrained_decision_schema(schema)["oneOf"]
+    suspicion = next(b for b in branches if b["properties"]["kind"]["const"] == "suspicion")
+    assert set(suspicion["required"]) == {"kind", "invariant_id", "summary"}
+    assert suspicion["properties"]["summary"] == {"type": "string", "minLength": 1}
+    assert suspicion["properties"]["invariant_id"]["const"] == "purchase_idempotency"
+    assert "anyOf" in schema["properties"]["invariant_id"]
 
 
 def response(content: str, **extra: object) -> httpx.Response:

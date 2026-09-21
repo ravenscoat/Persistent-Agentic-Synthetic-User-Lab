@@ -19,11 +19,13 @@ from synthetic_lab.config import Settings
 from synthetic_lab.contracts import (
     Action, AgentDecision, BudgetConfig, DecisionKind, Event, Finding,
     FindingStatus, MemoryRecord, MemoryType, ModelResponse, PersonaRecord,
-    ReplayStatus, RunRecord, SessionRecord, Trust,
+    ReplayStatus, RunRecord, SessionRecord, Trust, VerificationResult,
 )
 from synthetic_lab.demo import DemoStore, create_demo_app
 from synthetic_lab.demo.postgres_store import PostgresDemoStore
 from synthetic_lab.memory.context import MemoryContextAssembler
+from synthetic_lab.storage.in_memory import InMemoryMemoryRepository
+from synthetic_lab.llm import build_local_model
 from synthetic_lab.observability import LangfuseTracer, TracedContextAssembler, TracedModelClient, TracedToolRegistry
 from synthetic_lab.runtime.agent import PersonaAgent
 from synthetic_lab.runtime.demo_executor import _free_port
@@ -66,6 +68,7 @@ class ScenarioExecutor:
         now = datetime.now(timezone.utc)
         scenario = run.scenario_id
         fault = (run.config_snapshot or {}).get("fault") or self.settings.business_fault
+        run_memory = self.memory if (run.config_snapshot or {}).get("memory_enabled", True) else InMemoryMemoryRepository()
         store = PostgresDemoStore(self.settings.postgres_dsn, fault=fault) if self.settings.postgres_dsn else DemoStore(fault=fault)
         port = _free_port()
         server = uvicorn.Server(uvicorn.Config(create_demo_app(store), host="127.0.0.1", port=port, log_level="error"))
@@ -89,7 +92,8 @@ class ScenarioExecutor:
             invariant = {"trial_return": "trial_access_seven_days", "payment_retry": "purchase_idempotency", "ownership_transfer": "ownership_transfer", "interrupted_onboarding": "onboarding_persistence", "stale_task_status": "task_completion"}.get(scenario)
             if invariant is None:
                 raise ValueError(f"unsupported scenario: {scenario}")
-            tracer = LangfuseTracer(self.settings)
+            trace_settings = self.settings if (run.config_snapshot or {}).get("trace_enabled", True) else self.settings.model_copy(update={"langfuse_host": None, "langfuse_public_key": None, "langfuse_secret_key": None})
+            tracer = LangfuseTracer(trace_settings)
             tools = TracedToolRegistry(BrowserToolRegistry(browsers), tracer)
             sessions: dict[str, SessionRecord] = {}
             for persona_id, (persona, route) in specs.items():
@@ -97,10 +101,17 @@ class ScenarioExecutor:
                 sessions[persona_id] = session
                 try:
                     await self.state.enqueue_session(session)
-                except ValueError:
-                    session = await self.state.get_session(session.id)
+                except Exception:
+                    # PostgreSQL surfaces duplicate IDs as a driver error,
+                    # while the in-memory backend uses ValueError. A restart
+                    # can safely continue only when the durable checkpoint is
+                    # readable after either signal.
+                    try:
+                        session = await self.state.get_session(session.id)
+                    except KeyError:
+                        raise
                 try:
-                    await self.memory.append(MemoryRecord(id=f"{persona_id}-{run.id}-expectation", run_id=run.id, persona_id=persona_id, type=MemoryType.ENTITY, text=persona.goal, trust=Trust.VERIFIED, valid_from=now))
+                    await run_memory.append(MemoryRecord(id=f"{persona_id}-{run.id}-expectation", run_id=run.id, persona_id=persona_id, type=MemoryType.ENTITY, text=persona.goal, trust=Trust.VERIFIED, valid_from=now))
                 except ValueError:
                     pass
                 browser = PlaywrightBrowserSession(run.id, session.id, f"http://127.0.0.1:{port}", artifact_root=self.settings.artifact_root)
@@ -116,12 +127,25 @@ class ScenarioExecutor:
                 persona, route = pair
                 browser = browsers[persona_id]
                 observation = await browser.observe()
-                model = TracedModelClient(RouteModel(route, invariant), tracer)
-                context = TracedContextAssembler(MemoryContextAssembler(self.memory, memory_limit=2, tool_registry=tools), tracer)
+                raw_model = build_local_model(self.settings) if (run.config_snapshot or {}).get("agent_model") == "qwen" else RouteModel(route, invariant)
+                model = TracedModelClient(raw_model, tracer)
+                context = TracedContextAssembler(MemoryContextAssembler(run_memory, memory_limit=2, tool_registry=tools), tracer)
                 async def verify_suspicion(suspicion: Event) -> str:
                     requested = suspicion.payload.get("invariant_id")
                     operation = operation_id if scenario == "payment_retry" else None
-                    verification = await DemoVerifier().check(requested, DemoVerificationContext(store, account_id, operation))
+                    if scenario == "ownership_transfer":
+                        # This is a two-sided permission assertion, not a
+                        # single global check duplicated by both personas.
+                        expected = "member" if persona_id == "old-owner" else "owner"
+                        actual = store.role(account_id, persona_id)
+                        verification = VerificationResult(
+                            verdict="satisfied" if actual == expected else "confirmed",
+                            expected=expected,
+                            actual=actual,
+                            evidence_ids=[],
+                        )
+                    else:
+                        verification = await DemoVerifier().check(requested, DemoVerificationContext(store, account_id, operation))
                     finding = None
                     if verification.verdict != "satisfied":
                         status = FindingStatus.CONFIRMED if verification.verdict == "confirmed" else FindingStatus.INCONCLUSIVE
@@ -133,12 +157,18 @@ class ScenarioExecutor:
                         await self.state.save_finding(finding)
                     await self.state.append_event(Event(id=str(uuid4()), run_id=run.id, persona_id=persona_id, session_id=suspicion.session_id, sequence=await self.state.reserve_event_sequences(run.id), kind="verification_completed", wall_time=datetime.now(timezone.utc), business_time=datetime.now(timezone.utc), payload={"suspicion_event_id": suspicion.id, "finding_id": finding.id if finding else None, "invariant_id": requested, "verdict": verification.verdict, "expected": verification.expected, "actual": verification.actual}))
                     return verification.verdict
-                agent = PersonaAgent(model=model, context=context, tools=tools, state=self.state, memory=self.memory, budgets=BudgetConfig(max_steps=4, max_model_requests=5, output_tokens=160), completion_check=lambda: _at_route(browser, route), suspicion_handler=verify_suspicion)
+                decision_schema = AgentDecision.model_json_schema()
+                decision_schema["properties"]["invariant_id"] = {"anyOf": [{"const": invariant}, {"type": "null"}], "default": None}
+                qwen_mode = (run.config_snapshot or {}).get("agent_model") == "qwen"
+                agent = PersonaAgent(model=model, context=context, tools=tools, state=self.state, memory=run_memory, budgets=BudgetConfig(max_steps=4, max_model_requests=5, output_tokens=256 if qwen_mode else 160), completion_check=lambda: _at_route(browser, route), suspicion_handler=verify_suspicion, decision_schema=decision_schema if qwen_mode else None)
                 with tracer.run_trace(run.id, persona_id, sessions[persona_id].id) as trace:
+                    agent.finish_after_verification = True
                     result = await agent.run(persona, sessions[persona_id], observation)
                     if trace is not None:
                         trace.update(output={"status": result.status, "reason": result.reason, "steps": result.steps, "model_requests": result.model_requests})
                 await model.aclose()
+                if result.status != "completed":
+                    raise RuntimeError(f"Persona {persona_id} {result.status}: {result.reason}")
 
             await asyncio.gather(*(execute(persona_id, pair) for persona_id, pair in specs.items()))
         finally:
@@ -170,11 +200,19 @@ class ScenarioExecutor:
 
     @staticmethod
     def _persona_specs(run: RunRecord, scenario: str, account_id: str, now: datetime) -> dict[str, tuple[PersonaRecord, str]]:
+        expectations = {
+            "trial_return": "A seven-day trial must still be active on day six.",
+            "payment_retry": "Retrying the same purchase operation must produce exactly one recorded charge.",
+            "ownership_transfer": "After transfer, the former owner must be denied owner-only access and the new owner must be allowed.",
+            "interrupted_onboarding": "The completed onboarding step must still be 2 after returning.",
+            "stale_task_status": "A completed task must be displayed as completed rather than open.",
+        }
+        instruction = f" Expected invariant: {expectations.get(scenario, scenario)} If the visible state may violate it, return a suspicion decision for the relevant invariant; otherwise finish."
         if scenario == "ownership_transfer":
-            return {pid: (PersonaRecord(id=pid, run_id=run.id, kind="administrator", goal=f"Check owner access as {pid} after transfer.", application_account_id=account_id, allowed_tool_names=["navigate"]), "/api/owner-only") for pid in ("old-owner", "new-owner")}
+            return {pid: (PersonaRecord(id=pid, run_id=run.id, kind="administrator", goal=f"Navigate to /api/owner-only and check owner access as {pid} after transfer.{instruction}", application_account_id=account_id, allowed_tool_names=["navigate"]), "/api/owner-only") for pid in ("old-owner", "new-owner")}
         routes = {"trial_return": "/dashboard", "payment_retry": "/billing", "interrupted_onboarding": "/dashboard", "stale_task_status": "/tasks"}
         persona_id = f"persona-{run.id[:8]}"
-        return {persona_id: (PersonaRecord(id=persona_id, run_id=run.id, kind=scenario, goal=f"Inspect the {scenario} workflow and report what is visible.", application_account_id=account_id, allowed_tool_names=["navigate"]), routes[scenario])}
+        return {persona_id: (PersonaRecord(id=persona_id, run_id=run.id, kind=scenario, goal=f"Navigate to {routes[scenario]}, inspect the {scenario} workflow, and report what is visible.{instruction}", application_account_id=account_id, allowed_tool_names=["navigate"]), routes[scenario])}
 
 
 async def _at_route(browser: PlaywrightBrowserSession, route: str) -> bool:

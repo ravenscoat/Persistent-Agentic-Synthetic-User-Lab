@@ -43,6 +43,37 @@ def _json_object(content: Any) -> dict[str, Any]:
     return parsed
 
 
+def constrained_decision_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Expose conditional runtime requirements to constrained JSON generation."""
+    from copy import deepcopy
+
+    branches = []
+    for kind, fields in {
+        "action": ["action"],
+        "memory_query": ["query"],
+        "suspicion": ["invariant_id", "summary"],
+        "finish": ["summary"],
+        "blocked": ["summary"],
+    }.items():
+        branch = deepcopy(schema)
+        branch.pop("$defs", None)
+        branch["properties"]["kind"] = {"const": kind, "type": "string"}
+        branch["required"] = ["kind", *fields]
+        for field in fields:
+            prop = branch["properties"][field]
+            if "anyOf" in prop:
+                prop = next(p for p in prop["anyOf"] if p.get("type") != "null")
+            prop = deepcopy(prop)
+            if field != "action":
+                prop.update(type="string", minLength=1)
+            branch["properties"][field] = prop
+        for field in ("action", "query", "invariant_id"):
+            if field not in fields:
+                branch["properties"][field] = {"type": "null"}
+        branches.append(branch)
+    return {"$defs": deepcopy(schema.get("$defs", {})), "oneOf": branches}
+
+
 class OllamaModelClient:
     """One shared, bounded-concurrency client for a local Ollama server."""
 
@@ -61,7 +92,7 @@ class OllamaModelClient:
             await self._client.aclose()
 
     async def decide(self, messages: Sequence[dict[str, Any]], decision_schema: dict[str, Any] | None = None, generation_options: dict[str, Any] | None = None) -> ModelResponse:
-        schema = decision_schema or AgentDecision.model_json_schema()
+        schema = constrained_decision_schema(decision_schema or AgentDecision.model_json_schema())
         options = dict(generation_options or {})
         # Action selection is latency-sensitive. Qwen3 thinking remains
         # available by passing ``think=True`` explicitly.

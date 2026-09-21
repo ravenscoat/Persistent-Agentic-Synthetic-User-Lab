@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     model_fallback_names: str = ""
     model_concurrency: int = Field(default=1, ge=1)
     model_timeout_seconds: float = Field(default=45.0, gt=0)
+    model_provider: str = "ollama"
+    groq_api_key: str | None = None
+    groq_model_name: str = "openai/gpt-oss-120b"
     browser_origin: str = "http://127.0.0.1:8001"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     qdrant_url: str | None = None
@@ -23,10 +26,21 @@ class Settings(BaseSettings):
     langfuse_host: str | None = None
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
+    langfuse_environment: str = "development"
+    # Optional operator-console access control. Leave both unset for local
+    # development; deployments should provide two independent secrets.
+    dashboard_password: str | None = None
+    dashboard_session_secret: str | None = None
+    dashboard_cookie_secure: bool = False
+    dashboard_session_ttl_seconds: int = Field(default=28800, ge=300, le=604800)
 
     @property
     def langfuse_enabled(self) -> bool:
         return bool(self.langfuse_host and self.langfuse_public_key and self.langfuse_secret_key)
+
+    @property
+    def dashboard_auth_enabled(self) -> bool:
+        return bool(self.dashboard_password and self.dashboard_session_secret)
 
     def ensure_artifact_root(self) -> Path:
         self.artifact_root.mkdir(parents=True, exist_ok=True)

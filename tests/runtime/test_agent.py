@@ -69,7 +69,9 @@ async def test_agent_checkpoints_tool_and_finish() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_suspicion_is_checkpointed_before_verification() -> None:
+@pytest.mark.parametrize("automatic", [True, False])
+@pytest.mark.parametrize("verdict", ["confirmed", "satisfied", "inconclusive"])
+async def test_agent_suspicion_is_checkpointed_before_verification(automatic, verdict) -> None:
     now = datetime.now(timezone.utc)
     state, memory = InMemoryStateRepository(), InMemoryMemoryRepository()
     await state.create_run(RunRecord(id="suspect-run", scenario_id="trial_return", created_at=now, business_time=now))
@@ -86,9 +88,16 @@ async def test_agent_suspicion_is_checkpointed_before_verification() -> None:
         handled.append(event)
         assert event.kind == "agent_suspicion"
         assert event.payload["observation"]["visible_text"] == "Trial active: false"
-        return "confirmed"
+        return verdict
+    async def complete():
+        # Confirmed failures must terminate even though the expected product
+        # state is absent. Previously this fell through to completion repair.
+        return not (automatic and verdict == "confirmed")
     agent = PersonaAgent(model=ScriptedModel(decisions), context=MemoryContextAssembler(memory), tools=FakeTools(), state=state, memory=memory, budgets=BudgetConfig(max_steps=3), suspicion_handler=verify)
+    agent.finish_after_verification = automatic
+    agent.completion_check = complete
     result = await agent.run(persona, session, observation)
+    assert result.model_requests == (1 if automatic and verdict != "inconclusive" else 2)
     assert result.status == "completed"
     assert len(handled) == 1
     events = await state.list_events("suspect-run")

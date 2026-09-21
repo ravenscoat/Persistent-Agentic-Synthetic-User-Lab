@@ -62,6 +62,21 @@ def test_explicit_credentials_and_sdk_trace_getter(monkeypatch):
     assert tracer._propagate_attributes is not None
 
 
+def test_trace_propagates_stable_environment_and_tags():
+    captured = {}
+    @contextmanager
+    def propagate_attributes(**kwargs):
+        captured.update(kwargs)
+        yield
+    tracer = LangfuseTracer(Settings(_env_file=None, langfuse_host=None, langfuse_environment="staging"))
+    tracer.client = WorkingExporter()
+    tracer._propagate_attributes = propagate_attributes
+    with tracer.run_trace("run-1", "persona-1", "session-1"):
+        pass
+    assert captured["environment"] == "staging"
+    assert captured["tags"] == ["synthetic-user-lab", "browser-agent"]
+
+
 @pytest.mark.asyncio
 async def test_failed_model_does_not_reuse_previous_trace():
     class Model:

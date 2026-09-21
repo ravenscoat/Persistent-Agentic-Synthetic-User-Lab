@@ -26,11 +26,14 @@ async def main() -> None:
                 scenario_id=scenario_id,
                 created_at=now,
                 business_time=now,
-                config_snapshot={"fault": fault if use_fault else None},
+                config_snapshot={"fault": fault if use_fault else None, "trace_enabled": False},
             )
             await state.create_run(run)
             await state.transition_run(run.id, "RUNNING")
-            await ScenarioExecutor(state, memory, Settings(model_name="smoke", business_fault=None))(run)
+            # This proof is intentionally isolated and deterministic: it
+            # exercises real browsers and verifiers without using the local
+            # deployment database or sending audit traces externally.
+            await ScenarioExecutor(state, memory, Settings(model_name="smoke", business_fault=None, postgres_dsn=None))(run)
             findings = await state.list_findings(run.id)
             events = await state.list_events(run.id, limit=100)
             suspicions = [event for event in events if event.kind == "agent_suspicion"]
