@@ -112,8 +112,8 @@ Requirements: **Python 3.11+**, **Ollama**, and hardware capable of serving your
 ### 1. Install
 
 ```powershell
-git clone https://github.com/ravenscoat/memory-aware-agent.git
-cd memory-aware-agent
+git clone https://github.com/ravenscoat/Persistent-Agentic-Synthetic-User-Lab.git
+cd Persistent-Agentic-Synthetic-User-Lab
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[test,browser,postgres,model,qdrant,observability]"
 .\.venv\Scripts\python.exe -m playwright install chromium
